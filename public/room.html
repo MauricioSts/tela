@@ -1,0 +1,447 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Sala</title>
+<style>
+  :root {
+    --deep:#1e1f22; --bg:#2b2d31; --bg2:#313338; --accent:#5865f2; --accent-h:#4752c4;
+    --text:#dbdee1; --muted:#949ba4; --green:#23a55a; --red:#da373c; --line:rgba(255,255,255,.06);
+  }
+  * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  html, body { margin:0; height:100%; overflow:hidden; color:var(--text);
+    font-family:-apple-system,"Segoe UI",system-ui,Roboto,"Helvetica Neue",sans-serif; background:var(--deep); }
+
+  /* Login */
+  #login { position:fixed; inset:0; z-index:30; display:flex; align-items:center; justify-content:center; padding:20px; background:var(--deep); }
+  .card { width:min(92vw,400px); background:var(--bg2); border-radius:12px; padding:26px 24px; box-shadow:0 12px 40px rgba(0,0,0,.55); }
+  .card h1 { margin:0 0 4px; font-size:22px; text-align:center; font-weight:700; }
+  .card .sub { margin:0 0 20px; text-align:center; color:var(--muted); font-size:14px; }
+  .card label { display:block; font-size:12px; font-weight:700; letter-spacing:.02em; text-transform:uppercase; color:var(--muted); margin:0 0 8px; }
+  .card input { width:100%; padding:11px 12px; border-radius:6px; border:1px solid var(--deep); background:var(--deep); color:var(--text); font-size:16px; outline:none; }
+  .card input:focus { border-color:var(--accent); }
+  .card button { width:100%; margin-top:20px; padding:13px; border:0; border-radius:6px; background:var(--accent); color:#fff; font-size:15px; font-weight:600; cursor:pointer; }
+  .card button:hover { background:var(--accent-h); }
+
+  /* Barra superior */
+  #top { position:fixed; top:0; left:0; right:0; z-index:8; height:calc(40px + env(safe-area-inset-top)); padding:env(safe-area-inset-top) 12px 0;
+    display:flex; align-items:center; gap:8px; background:linear-gradient(#1e1f22cc,transparent); font-size:13px; color:var(--muted); }
+  #top .dot { width:9px; height:9px; border-radius:50%; background:var(--green); }
+
+  /* Grade de participantes */
+  #grid { position:fixed; top:0; left:0; right:0; bottom:calc(78px + env(safe-area-inset-bottom));
+    display:grid; gap:8px; padding:8px; }
+  .tile { position:relative; background:#000; border-radius:8px; overflow:hidden; min-height:0;
+    display:flex; align-items:center; justify-content:center; }
+  .tile.sharing { outline:2px solid var(--green); outline-offset:-2px; }
+  .tile video { width:100%; height:100%; object-fit:contain; background:#000; display:none; }
+  .tile.hasvideo video { display:block; }
+  .tile.hasvideo .avatar { display:none; }
+  .avatar { display:flex; align-items:center; justify-content:center; width:74px; height:74px; border-radius:50%;
+    background:var(--accent); color:#fff; font-size:30px; font-weight:700; }
+  .tile .label { position:absolute; left:8px; bottom:8px; background:rgba(0,0,0,.65); color:#fff;
+    font-size:13px; font-weight:600; padding:3px 9px; border-radius:8px; max-width:78%;
+    overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  #empty { position:absolute; inset:0; display:flex; align-items:center; justify-content:center;
+    color:var(--muted); font-size:15px; text-align:center; padding:24px; }
+
+  /* Barra de controles */
+  #bar { position:fixed; left:0; right:0; bottom:0; z-index:10; height:calc(78px + env(safe-area-inset-bottom));
+    padding-bottom:env(safe-area-inset-bottom); background:var(--bg); border-top:1px solid var(--line);
+    display:flex; align-items:center; justify-content:center; gap:14px; }
+  .ctrl { width:52px; height:52px; border-radius:50%; border:0; background:var(--bg2); color:var(--text);
+    font-size:22px; display:flex; align-items:center; justify-content:center; cursor:pointer; position:relative; }
+  .ctrl:hover { background:#3a3c42; }
+  .ctrl.on { background:#fff; color:#111; }
+  .ctrl.danger { background:var(--red); color:#fff; }
+  .ctrl:disabled { opacity:.4; cursor:default; }
+  #chatbtn.badge::after { content:''; position:absolute; top:8px; right:8px; width:11px; height:11px;
+    border-radius:50%; background:var(--red); border:2px solid var(--bg); }
+
+  /* Popover de volume */
+  #volpop { position:fixed; bottom:calc(86px + env(safe-area-inset-bottom)); left:50%; transform:translateX(-50%);
+    z-index:11; background:var(--bg2); border:1px solid var(--line); border-radius:12px; padding:12px 16px;
+    display:flex; align-items:center; gap:10px; box-shadow:0 8px 24px rgba(0,0,0,.5); }
+  #vol { -webkit-appearance:none; appearance:none; width:150px; height:6px; border-radius:3px; background:#1e1f22; outline:none; }
+  #vol::-webkit-slider-thumb { -webkit-appearance:none; width:20px; height:20px; border-radius:50%; background:var(--accent); cursor:pointer; }
+  #vol::-moz-range-thumb { width:20px; height:20px; border:0; border-radius:50%; background:var(--accent); cursor:pointer; }
+
+  /* Chat lateral */
+  #chat { position:fixed; top:0; right:0; bottom:0; z-index:15; width:min(88vw,360px);
+    background:var(--bg2); border-left:1px solid var(--line); display:flex; flex-direction:column;
+    transform:translateX(100%); transition:transform .2s ease; }
+  #chat.open { transform:none; }
+  #chat .head { display:flex; align-items:center; justify-content:space-between; padding:14px 16px;
+    border-bottom:1px solid var(--line); font-weight:700; }
+  #chat .head span { color:var(--muted); font-size:26px; line-height:1; cursor:pointer; }
+  #msgs { flex:1; overflow-y:auto; padding:12px 16px; display:flex; flex-direction:column; gap:9px; }
+  .msg { font-size:14px; line-height:1.42; word-break:break-word; }
+  .msg .who { font-weight:600; color:#fff; margin-right:6px; }
+  .msg.sys { color:var(--muted); font-size:12.5px; }
+  #chatrow { display:flex; gap:8px; padding:12px 16px calc(12px + env(safe-area-inset-bottom)); border-top:1px solid var(--line); }
+  #chatrow input { flex:1; padding:11px 14px; border-radius:8px; border:0; background:var(--deep); color:var(--text); font-size:16px; outline:none; }
+
+  .hidden { display:none !important; }
+</style>
+</head>
+<body>
+
+<div id="top" class="hidden"><span class="dot"></span><span id="topinfo">Sala</span></div>
+
+<div id="grid"><div id="empty">Ninguém transmitindo ainda.<br>Toque em 🖥️ pra compartilhar sua tela.</div></div>
+
+<div id="bar" class="hidden">
+  <button id="share" class="ctrl" title="Compartilhar tela">🖥️</button>
+  <button id="volbtn" class="ctrl" title="Volume">🔊</button>
+  <button id="chatbtn" class="ctrl" title="Chat">💬</button>
+  <button id="leave" class="ctrl danger" title="Sair">⏻</button>
+</div>
+
+<div id="volpop" class="hidden"><span>🔊</span><input id="vol" type="range" min="0" max="1" step="0.01" value="1" aria-label="Volume"></div>
+
+<div id="chat">
+  <div class="head"><span style="visibility:hidden">×</span>Chat<span id="chatclose">×</span></div>
+  <div id="msgs"></div>
+  <div id="chatrow"><input id="chatinput" maxlength="500" placeholder="Mensagem…"></div>
+</div>
+
+<div id="login">
+  <div class="card">
+    <h1>📺 Entrar na sala</h1>
+    <div class="sub">estilo call do Discord — todos veem todos</div>
+    <label for="name">Seu nome</label>
+    <input id="name" maxlength="24" placeholder="Como querem te chamar?" autocomplete="off">
+    <button id="enter">Entrar</button>
+  </div>
+</div>
+
+<script>
+// Token e ICE servers são injetados pelo server.js em tempo de request
+// (placeholders substituídos por valores do .env). Não versionar segredos aqui.
+const TOKEN = '__TELA_TOKEN__';
+
+const ICE = __TELA_ICE_JSON__;
+
+let ws = null, myId = null, myName = 'Convidada';
+let localStream = null;
+const peers = new Map();          // peerId -> { pc, makingOffer, ignoreOffer, polite, name }
+const remoteStreams = new Set();     // streams remotos conhecidos
+const audioSources = new Map();       // stream -> MediaStreamAudioSourceNode (garante 1 por stream)
+let audioCtx = null, gainNode = null;
+
+const $ = (id) => document.getElementById(id);
+const gridEl = $('grid'), emptyEl = $('empty'), msgsEl = $('msgs');
+
+// ---- WebSocket -----------------------------------------------------------
+
+function wsUrl() {
+  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  return `${proto}//${location.host}/ws?token=${encodeURIComponent(TOKEN)}`;
+}
+
+let joinedChat = false;
+function connectWS() {
+  ws = new WebSocket(wsUrl());
+  ws.onclose = () => setTimeout(connectWS, 1500);
+  ws.onopen = () => {
+    if (!joinedChat) { joinedChat = true; sendWS({ type: 'chat', name: myName, text: 'entrou', system: true }); }
+  };
+  ws.onmessage = async (ev) => {
+    const m = JSON.parse(ev.data);
+    if (m.type === 'chat') { addMsg(m); return; }
+    if (m.type === 'welcome') {
+      myId = m.id;
+      ensureTile('me', myName + ' (você)');
+      for (const pid of m.peers) createPeer(pid);
+      updateTop();
+    } else if (m.type === 'new-peer') {
+      createPeer(m.id);
+      updateTop();
+    } else if (m.type === 'peer-left') {
+      removePeer(m.id);
+      updateTop();
+    } else if (m.type === 'full') {
+      alert('Sala cheia (5/5).');
+    } else if (m.from != null) {
+      await handleSignal(m);
+    }
+  };
+}
+function sendWS(obj) { if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(obj)); }
+function sig(to, obj) { sendWS({ ...obj, to }); }
+
+// ---- Mesh: perfect negotiation ------------------------------------------
+
+function createPeer(peerId) {
+  if (peers.has(peerId)) return peers.get(peerId);
+  const pc = new RTCPeerConnection({ iceServers: ICE });
+  const st = { pc, makingOffer: false, ignoreOffer: false, polite: myId > peerId, name: '' };
+  peers.set(peerId, st);
+  ensureTile(peerId, '');
+
+  if (localStream) addLocalTracksTo(st);
+
+  pc.onnegotiationneeded = async () => {
+    try {
+      st.makingOffer = true;
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
+      sig(peerId, { description: pc.localDescription });
+    } catch (e) { console.warn('negotiation', e); }
+    finally { st.makingOffer = false; }
+  };
+  pc.onicecandidate = ({ candidate }) => { if (candidate) sig(peerId, { candidate }); };
+  pc.ontrack = (ev) => {
+    const stream = ev.streams[0];
+    if (ev.track.kind === 'video') {
+      attachStream(peerId, stream, false);
+      ev.track.onmute = () => setHasVideo(peerId, false);
+      ev.track.onunmute = () => setHasVideo(peerId, true);
+    }
+    remoteStreams.add(stream);
+    routeAudio(stream); // idempotente: só conecta o áudio uma vez por stream
+  };
+  pc.onconnectionstatechange = () => {
+    if (pc.connectionState === 'failed' || pc.connectionState === 'closed') removePeer(peerId);
+  };
+
+  // Manda meu nome pro outro lado rotular a tile.
+  sig(peerId, { kind: 'name', name: myName });
+  return st;
+}
+
+function addLocalTracksTo(st) {
+  for (const track of localStream.getTracks()) {
+    const sender = st.pc.addTrack(track, localStream);
+    if (track.kind !== 'video') continue;
+    const tx = st.pc.getTransceivers().find((t) => t.sender === sender);
+    const pref = preferH264('video');
+    if (pref && tx.setCodecPreferences) tx.setCodecPreferences(pref);
+    const p = sender.getParameters();
+    if (!p.encodings || !p.encodings.length) p.encodings = [{}];
+    p.encodings[0].maxBitrate = 4_000_000; // mesh: menor que 1:1 pra caber várias
+    p.encodings[0].networkPriority = 'high';
+    p.degradationPreference = 'balanced';
+    sender.setParameters(p).catch(() => {});
+  }
+}
+
+async function handleSignal(m) {
+  const st = peers.get(m.from) || createPeer(m.from);
+  const pc = st.pc;
+  if (m.kind === 'name') { st.name = m.name; setLabel(m.from, m.name); return; }
+  try {
+    if (m.description) {
+      const collision = m.description.type === 'offer' && (st.makingOffer || pc.signalingState !== 'stable');
+      st.ignoreOffer = !st.polite && collision;
+      if (st.ignoreOffer) return;
+      await pc.setRemoteDescription(m.description);
+      if (m.description.type === 'offer') {
+        const answer = await pc.createAnswer();
+        await pc.setLocalDescription(answer);
+        sig(m.from, { description: pc.localDescription });
+      }
+    } else if (m.candidate) {
+      try { await pc.addIceCandidate(m.candidate); } catch (e) { if (!st.ignoreOffer) console.warn(e); }
+    }
+  } catch (e) { console.warn('signal', e); }
+}
+
+function removePeer(peerId) {
+  const st = peers.get(peerId);
+  if (st) { try { st.pc.close(); } catch (_) {} peers.delete(peerId); }
+  removeTile(peerId);
+  pruneAudio();
+}
+
+function preferH264(kind) {
+  const caps = (RTCRtpSender.getCapabilities && RTCRtpSender.getCapabilities(kind)) || null;
+  if (!caps) return null;
+  const h264 = caps.codecs.filter((c) => c.mimeType.toLowerCase() === 'video/h264');
+  const rest = caps.codecs.filter((c) => c.mimeType.toLowerCase() !== 'video/h264');
+  return h264.length ? [...h264, ...rest] : null;
+}
+
+// ---- Grade / tiles -------------------------------------------------------
+
+const tiles = new Map(); // peerId -> { el, video, label }
+
+function ensureTile(peerId, label) {
+  if (tiles.has(peerId)) { if (label) setLabel(peerId, label); return tiles.get(peerId); }
+  const el = document.createElement('div');
+  el.className = 'tile';
+  const avatar = document.createElement('div');
+  avatar.className = 'avatar';
+  const video = document.createElement('video');
+  video.autoplay = true; video.muted = true; video.playsInline = true; video.setAttribute('playsinline', '');
+  const lab = document.createElement('div');
+  lab.className = 'label';
+  el.append(video, avatar, lab);
+  el.onclick = () => { // toque = tela cheia da tile
+    if (video.requestFullscreen) video.requestFullscreen();
+    else if (video.webkitEnterFullscreen) video.webkitEnterFullscreen();
+  };
+  gridEl.appendChild(el);
+  const t = { el, video, label: lab, avatar };
+  tiles.set(peerId, t);
+  setLabel(peerId, label || '…');
+  layout();
+  return t;
+}
+
+function setLabel(peerId, name) {
+  const t = tiles.get(peerId); if (!t || !name) return;
+  t.label.textContent = name;
+  t.avatar.textContent = (name.trim()[0] || '?').toUpperCase();
+}
+
+function setHasVideo(peerId, has) {
+  const t = tiles.get(peerId); if (!t) return;
+  t.el.classList.toggle('hasvideo', has);
+  t.el.classList.toggle('sharing', has);
+}
+
+function attachStream(peerId, stream, isLocal) {
+  const t = ensureTile(peerId, isLocal ? myName + ' (você)' : '');
+  t.video.srcObject = stream;
+  t.video.muted = true; // áudio sai pela Web Audio (volume); local nunca toca aqui
+  t.video.play().catch(() => {});
+  setHasVideo(peerId, true);
+}
+
+function removeTile(peerId) {
+  const t = tiles.get(peerId); if (!t) return;
+  t.el.remove(); tiles.delete(peerId); layout();
+}
+
+function layout() {
+  const n = tiles.size || 1;
+  const cols = n <= 1 ? 1 : (n <= 4 ? 2 : 3);
+  gridEl.style.gridTemplateColumns = `repeat(${cols}, 1fr)`;
+  emptyEl.classList.toggle('hidden', tiles.size > 0);
+  if (tiles.size === 0) gridEl.appendChild(emptyEl);
+}
+
+function updateTop() {
+  $('topinfo').textContent = `Sala • ${peers.size + 1} ${peers.size === 0 ? 'pessoa' : 'pessoas'}`;
+}
+
+// ---- Compartilhar tela ---------------------------------------------------
+
+const shareBtn = $('share');
+const canShare = !!(navigator.mediaDevices && navigator.mediaDevices.getDisplayMedia);
+if (!canShare) { shareBtn.disabled = true; shareBtn.title = 'iPhone não compartilha tela pelo navegador'; }
+
+shareBtn.onclick = async () => {
+  if (localStream) { stopShare(); return; }
+  try {
+    localStream = await navigator.mediaDevices.getDisplayMedia({
+      video: { width: { ideal: 1920 }, height: { ideal: 1080 }, frameRate: { ideal: 30, max: 30 } },
+      audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
+    });
+  } catch (e) { return; }
+  localStream.getVideoTracks()[0].contentHint = 'motion';
+  localStream.getVideoTracks()[0].onended = stopShare;
+  attachStream('me', localStream, true);
+  for (const st of peers.values()) addLocalTracksTo(st); // renegocia com todos
+  shareBtn.classList.add('on');
+  shareBtn.textContent = '⏹';
+};
+
+function stopShare() {
+  if (!localStream) return;
+  for (const track of localStream.getTracks()) {
+    track.stop();
+    for (const st of peers.values()) {
+      const s = st.pc.getSenders().find((se) => se.track === track);
+      if (s) try { st.pc.removeTrack(s); } catch (_) {}
+    }
+  }
+  localStream = null;
+  pruneAudio();
+  const t = tiles.get('me'); if (t) { t.video.srcObject = null; setHasVideo('me', false); }
+  shareBtn.classList.remove('on');
+  shareBtn.textContent = '🖥️';
+}
+
+// ---- Áudio + volume ------------------------------------------------------
+
+const volBtn = $('volbtn'), volPop = $('volpop'), volSlider = $('vol');
+
+// Conecta o áudio de um stream ao volume — no máximo UMA fonte por stream.
+function routeAudio(stream) {
+  if (!audioCtx || !gainNode) return;
+  if (audioSources.has(stream)) return;            // já roteado: não duplica
+  if (!stream.getAudioTracks().length) return;     // ainda sem faixa de áudio
+  try {
+    const src = audioCtx.createMediaStreamSource(stream);
+    src.connect(gainNode);
+    audioSources.set(stream, src);
+  } catch (e) { console.warn('routeAudio', e); }
+}
+
+// Remove fontes cujo áudio já morreu (peer saiu / parou de compartilhar).
+function pruneAudio() {
+  for (const [stream, src] of audioSources) {
+    if (!stream.getAudioTracks().some((t) => t.readyState === 'live')) {
+      try { src.disconnect(); } catch (_) {}
+      audioSources.delete(stream);
+    }
+  }
+}
+
+function enableAudio() {
+  if (!audioCtx) {
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    gainNode = audioCtx.createGain();
+    gainNode.connect(audioCtx.destination);
+    volBtn.classList.add('on');
+  }
+  audioCtx.resume();
+  gainNode.gain.value = parseFloat(volSlider.value);
+  for (const s of remoteStreams) routeAudio(s); // conecta os que faltam, sem duplicar
+}
+
+volBtn.onclick = () => { enableAudio(); volPop.classList.toggle('hidden'); };
+volSlider.oninput = () => { if (gainNode) gainNode.gain.value = parseFloat(volSlider.value); };
+
+// ---- Chat ----------------------------------------------------------------
+
+const chatEl = $('chat'), chatBtn = $('chatbtn'), chatInput = $('chatinput');
+
+function addMsg(m) {
+  const div = document.createElement('div');
+  if (m.system) { div.className = 'msg sys'; div.textContent = `${m.name} ${m.text}`; }
+  else {
+    div.className = 'msg';
+    const who = document.createElement('span'); who.className = 'who'; who.textContent = m.name;
+    div.append(who, document.createTextNode(m.text));
+  }
+  msgsEl.appendChild(div); msgsEl.scrollTop = msgsEl.scrollHeight;
+  if (!chatEl.classList.contains('open')) chatBtn.classList.add('badge');
+}
+function sendChat() {
+  const text = chatInput.value.trim(); if (!text) return;
+  const m = { type: 'chat', name: myName, text };
+  sendWS(m); addMsg(m); chatInput.value = '';
+}
+chatInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') sendChat(); });
+chatBtn.onclick = () => { chatEl.classList.toggle('open'); if (chatEl.classList.contains('open')) chatBtn.classList.remove('badge'); };
+$('chatclose').onclick = () => chatEl.classList.remove('open');
+
+// ---- Sair / entrar -------------------------------------------------------
+
+$('leave').onclick = () => { try { ws.close(); } catch (_) {} location.reload(); };
+
+$('enter').onclick = () => {
+  myName = ($('name').value.trim() || 'Convidada').slice(0, 24);
+  $('login').classList.add('hidden');
+  $('bar').classList.remove('hidden');
+  $('top').classList.remove('hidden');
+  connectWS();
+};
+$('name').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('enter').click(); });
+</script>
+</body>
+</html>

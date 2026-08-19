@@ -1,0 +1,14 @@
+{
+  "name": "tela-share",
+  "version": "1.0.0",
+  "description": "Compartilhamento de tela P2P via WebRTC, uma sala fixa, 2 peers.",
+  "private": true,
+  "type": "commonjs",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  }
+}
