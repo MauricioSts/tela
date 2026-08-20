@@ -328,19 +328,37 @@ const server = http.createServer((req, res) => {
 // Uma conexão por usuário (a última vence). Presença por servidor e mesh de
 // voz por sala. Sinalização direcionada por userId.
 const wss = new WebSocketServer({ server, path: '/ws' });
-const sockets = new Map();           // userId -> socket
+const sockets = new Map();           // userId -> Set(socket)  (vários aparelhos)
+const voiceSock = new Map();         // userId -> socket que está na sala de voz
 const voiceRooms = new Map();        // channelId -> Set(userId)
 
 function send(sock, obj) { if (sock && sock.readyState === sock.OPEN) sock.send(JSON.stringify(obj)); }
-function pushTo(uid, obj) { send(sockets.get(uid), obj); }
+function pushTo(uid, obj) { const set = sockets.get(uid); if (set) for (const s of set) send(s, obj); }
+function pushVoice(uid, obj) { send(voiceSock.get(uid), obj); }  // só a sessão que está na call
 
 function roomOf(uid) { for (const [cid, set] of voiceRooms) if (set.has(uid)) return cid; return null; }
 function leaveVoice(uid) {
+  voiceSock.delete(uid);
   const cid = roomOf(uid); if (cid == null) return;
   voiceRooms.get(cid).delete(uid);
-  const u = db.prepare('SELECT nick FROM users WHERE id=?').get(uid);
-  for (const pid of voiceRooms.get(cid)) pushTo(pid, { type: 'voice-left', room: cid, id: uid });
+  for (const pid of voiceRooms.get(cid)) pushVoice(pid, { type: 'voice-left', room: cid, id: uid });
   if (voiceRooms.get(cid).size === 0) voiceRooms.delete(cid);
+}
+
+function doVoiceJoin(sock, uid, user, cid) {
+  const ch = db.prepare('SELECT * FROM channels WHERE id=?').get(cid);
+  if (!ch || ch.kind !== 'voice') return;
+  const prev = voiceSock.get(uid);
+  if (prev && prev !== sock) send(prev, { type: 'voice-taken' });  // a call mudou de aparelho
+  leaveVoice(uid);
+  voiceSock.set(uid, sock);
+  if (!voiceRooms.has(cid)) voiceRooms.set(cid, new Set());
+  const set = voiceRooms.get(cid);
+  if (set.size >= MAX_VOICE) { send(sock, { type: 'voice-full', room: cid }); return; }
+  const peers = [...set].map((pid) => ({ id: pid, nick: db.prepare('SELECT nick FROM users WHERE id=?').get(pid)?.nick || '?' }));
+  set.add(uid);
+  send(sock, { type: 'voice-peers', room: cid, peers });
+  for (const pid of set) if (pid !== uid) pushVoice(pid, { type: 'voice-joined', room: cid, id: uid, nick: user.nick });
 }
 
 wss.on('connection', (sock, req) => {
@@ -351,10 +369,11 @@ wss.on('connection', (sock, req) => {
   if (!user) { sock.close(); return; }
   const uid = user.id;
 
-  // desconecta sessão antiga do mesmo usuário
-  const old = sockets.get(uid);
-  if (old && old !== sock) { leaveVoice(uid); try { old.close(); } catch {} }
-  sockets.set(uid, sock);
+  // várias sessões por conta convivem (PC + celular). Só a voz é exclusiva:
+  // quem entra na call por último fica com ela. Derrubar a sessão antiga aqui
+  // fazia os dois aparelhos se expulsarem em loop de ~1s.
+  if (!sockets.has(uid)) sockets.set(uid, new Set());
+  sockets.get(uid).add(sock);
   send(sock, { type: 'ready', user: publicUser(user) });
 
   sock.on('message', (raw) => {
@@ -382,32 +401,38 @@ wss.on('connection', (sock, req) => {
       return;
     }
 
-    if (m.type === 'voice-join') {
-      const cid = Number(m.room);
-      const ch = db.prepare('SELECT * FROM channels WHERE id=?').get(cid);
-      if (!ch || ch.kind !== 'voice') return;
-      leaveVoice(uid);
-      if (!voiceRooms.has(cid)) voiceRooms.set(cid, new Set());
-      const set = voiceRooms.get(cid);
-      if (set.size >= MAX_VOICE) { send(sock, { type: 'voice-full', room: cid }); return; }
-      const peers = [...set].map((pid) => ({ id: pid, nick: db.prepare('SELECT nick FROM users WHERE id=?').get(pid)?.nick || '?' }));
-      set.add(uid);
-      send(sock, { type: 'voice-peers', room: cid, peers });
-      for (const pid of set) if (pid !== uid) pushTo(pid, { type: 'voice-joined', room: cid, id: uid, nick: user.nick });
+    if (m.type === 'voice-join') { doVoiceJoin(sock, uid, user, Number(m.room)); return; }
+
+    // sincronização não destrutiva: o cliente pede a lista de quem está na sala
+    // sem sair e entrar de novo (usado em toda reconexão e a cada 15s)
+    if (m.type === 'voice-sync') {
+      const want = Number(m.room);
+      const cid = roomOf(uid);
+      if (cid != null && cid === want && voiceSock.get(uid) === sock) {
+        const set = voiceRooms.get(cid);
+        const peers = [...set].filter((p) => p !== uid)
+          .map((pid) => ({ id: pid, nick: db.prepare('SELECT nick FROM users WHERE id=?').get(pid)?.nick || '?' }));
+        send(sock, { type: 'voice-peers', room: cid, peers, sync: true });
+        return;
+      }
+      doVoiceJoin(sock, uid, user, want);   // não estava mesmo na sala: entra
       return;
     }
-    if (m.type === 'voice-leave') { leaveVoice(uid); return; }
+    if (m.type === 'voice-leave') { if (!voiceSock.has(uid) || voiceSock.get(uid) === sock) leaveVoice(uid); return; }
 
     // sinalização mesh direcionada (description/candidate/state)
     if (m.to != null) {
       const cid = roomOf(uid);
-      if (cid == null || !voiceRooms.get(cid).has(Number(m.to))) return; // só dentro da mesma sala
-      m.from = uid; pushTo(Number(m.to), m);
+      if (cid == null || voiceSock.get(uid) !== sock) return;            // só a sessão que está na call
+      if (!voiceRooms.get(cid).has(Number(m.to))) return;                // só dentro da mesma sala
+      m.from = uid; pushVoice(Number(m.to), m);
     }
   });
 
   sock.on('close', () => {
-    if (sockets.get(uid) === sock) { leaveVoice(uid); sockets.delete(uid); }
+    const set = sockets.get(uid);
+    if (set) { set.delete(sock); if (!set.size) sockets.delete(uid); }
+    if (voiceSock.get(uid) === sock) leaveVoice(uid);
   });
 });
 

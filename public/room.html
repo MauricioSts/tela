@@ -843,7 +843,7 @@ function mungeDesc(d){ return {type:d.type, sdp:mungeOpus(d.sdp)}; }
    troca de wi-fi pra 4G), o cliente fica na call vendo só a si mesmo — então
    nada é enviado com o socket fechado: vai pra fila e o voice-join é refeito
    em toda reconexão. */
-let wsQueue=[], wsTries=0, lastJoinAt=0;
+let wsQueue=[], wsTries=0;
 function setConnStat(t){ for(const id of ['vbarstat','callconn']){ const e=$(id); if(e) e.textContent=t; }
   const c=$('callconn'); if(c) c.style.color = t==='CONECTADO'||t==='PRONTO' ? 'var(--mint)' : 'var(--amber)'; }
 function connectWS(){ if(!ME) return;
@@ -853,10 +853,10 @@ function connectWS(){ if(!ME) return;
   ws=new WebSocket(`${proto}//${location.host}/ws?token=${encodeURIComponent(TOKEN)}`);
   ws.onopen=()=>{ wsTries=0;
     const q=wsQueue; wsQueue=[]; for(const o of q) try{ ws.send(JSON.stringify(o)); }catch(_){}
-    if(curVoiceChan) rejoinVoice();       // volta pra sala depois de qualquer queda
-    else setConnStat('PRONTO'); };
-  ws.onclose=()=>{ setConnStat('RECONECTANDO…');
-    if(ME) setTimeout(connectWS, Math.min(1000*Math.pow(1.6,wsTries++), 8000)); };
+    if(curVoiceChan){ syncVoice(); setConnStat('CONECTADO'); }
+    else { sendWS({type:'voice-leave'}); setConnStat('PRONTO'); } };
+  ws.onclose=()=>{ if(sessionReplaced) return; setConnStat('RECONECTANDO…');
+    if(ME) setTimeout(connectWS, Math.min(1500*Math.pow(1.6,wsTries++), 10000) + Math.random()*400); };
   ws.onerror=()=>{ try{ ws.close(); }catch(_){} };
   ws.onmessage=async(ev)=>{ const m=JSON.parse(ev.data); await onWS(m); };
 }
@@ -866,16 +866,10 @@ function sendWS(o){
   if(wsQueue.length<40) wsQueue.push(o);
   connectWS();
 }
-/* refaz a entrada na sala: derruba os peers velhos e pede a lista de novo */
-function rejoinVoice(){ if(!curVoiceChan) return;
-  lastJoinAt=Date.now();
-  for(const uid of [...peers.keys()]) removePeer(uid);
-  sendWS({type:'voice-join',room:curVoiceChan});
-  setConnStat('CONECTADO');
-}
-/* rede de segurança: na call, sem nenhum peer e com socket aberto, tenta de novo */
-setInterval(()=>{ if(!curVoiceChan||!ws||ws.readyState!==WebSocket.OPEN) return;
-  if(peers.size===0 && Date.now()-lastJoinAt>10000) rejoinVoice(); },5000);
+/* pede a lista da sala SEM sair e entrar (o servidor responde voice-peers).
+   Antes isso era um re-join, que fazia os outros verem a pessoa piscando. */
+function syncVoice(){ if(!curVoiceChan) return; sendWS({type:'voice-sync',room:curVoiceChan}); }
+setInterval(()=>{ if(curVoiceChan&&ws&&ws.readyState===WebSocket.OPEN) syncVoice(); },15000);
 document.addEventListener('visibilitychange',()=>{ if(document.visibilityState!=='visible') return;
   if(!ws||ws.readyState===WebSocket.CLOSED||ws.readyState===WebSocket.CLOSING) connectWS();
   for(const n of streamNodes.values()) tryPlay(n);
@@ -883,18 +877,31 @@ document.addEventListener('visibilitychange',()=>{ if(document.visibilityState!=
 function sig(to,o){ sendWS({...o,to}); }
 async function onWS(m){
   if(m.type==='error'){ if(m.reason==='auth') logout(); return; }
+  if(m.type==='voice-taken'){ onVoiceTaken(); return; }
   if(m.type==='ready') return;
   if(m.type==='msg'){ const arr=chatHist.get(m.channel)||[]; arr.push(m.msg); chatHist.set(m.channel,arr);
     if(m.channel===curTextChan){ appendMsg(m.msg,$('chatmsgs')); appendMsg(m.msg,$('ccmsgs')); }
     if(m.msg.user!==ME.id) SND.msg(); return; }
   if(m.type==='typing'){ if(m.channel===curTextChan) showTyping(m.nick); return; }
   if(m.type==='friend-update'){ refreshFriends(); return; }
-  if(m.type==='voice-peers'){ for(const p of m.peers) createPeer(p.id, p.nick); refreshVoiceWho(); return; }
+  if(m.type==='voice-peers'){
+    const ids=new Set(m.peers.map(p=>p.id));
+    for(const uid of [...peers.keys()]) if(!ids.has(uid)) removePeer(uid);   // saiu de verdade
+    for(const p of m.peers) createPeer(p.id, p.nick);                        // já existe = no-op
+    refreshVoiceWho(); updateCallControls(); return; }
   if(m.type==='voice-joined'){ createPeer(m.id, m.nick); SND.join(); refreshVoiceWho(); return; }
   if(m.type==='voice-left'){ removePeer(m.id); SND.leave(); refreshVoiceWho(); return; }
   if(m.type==='voice-full'){ toast('Sala cheia (5/5)','#ff2d7a'); leaveVoiceLocal(); return; }
   if(m.from!=null) await handleSignal(m);
 }
+/* a conta entrou na call por outro aparelho — o MIMO mantém uma call por
+   conta (igual Discord), mas o chat continua funcionando nos dois */
+function onVoiceTaken(){
+  if(curVoiceChan) leaveVoiceLocal(true);
+  setTab(isMobile()?'salas':'chat');
+  toast('A call foi movida pro outro aparelho','#ffb020'); SND.leave();
+}
+let sessionReplaced=false;   // mantido só pro onclose antigo não quebrar
 function broadcastState(){ for(const uid of peers.keys())
   sig(uid,{kind:'state',name:ME.nick,color:ME.color,sharing:!!screenStream,mobile:isMobile()}); }
 
@@ -1130,7 +1137,7 @@ async function joinVoice(ch){
   setConnStat('CONECTADO');
   $('vbar').classList.remove('hidden'); connectedAt=Date.now();
   ensureTile('me',ME.nick+' (você)',ME.color);
-  lastJoinAt=Date.now(); sendWS({type:'voice-join',room:ch.id});
+  sendWS({type:'voice-join',room:ch.id});
   keepAwake(true);
   selectServer(curServer.id); setTab('call'); refreshVoiceWho(); SND.join(); }
 function leaveVoiceLocal(quiet){ sendWS({type:'voice-leave'}); for(const uid of [...peers.keys()]) removePeer(uid); removeTile('me');
