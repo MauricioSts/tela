@@ -806,7 +806,9 @@ async function toggleShare(){ if(screenStream){ stopShare(); return; }
   screenStream=stream; const vt=stream.getVideoTracks()[0]; vt.contentHint='detail'; vt.onended=stopShare;
   const s=vt.getSettings(); screenSpec=`${s.width||'?'}×${s.height||'?'} · ${Math.round(s.frameRate||0)}fps`;
   attachLocalScreen(stream); for(const st of peers.values()) addScreenTo(st);
-  updateCallControls(); setFocus('me'); SND.share(); broadcastState(); toast('Transmitindo · '+screenSpec,'#ffb020'); }
+  updateCallControls(); setFocus('me'); SND.share(); broadcastState();
+  sendWS({type:'sharing',on:true});          // servidor avisa no Discord
+  toast('Transmitindo · '+screenSpec,'#ffb020'); }
 function addScreenTo(st){ for(const track of screenStream.getTracks()){ const sender=st.pc.addTrack(track,screenStream); if(track.kind!=='video') continue;
   const tx=st.pc.getTransceivers().find(t=>t.sender===sender); if(tx&&tx.setCodecPreferences){ const p=preferCodec('video','video/H264'); if(p) try{tx.setCodecPreferences(p);}catch(_){} }
   st.vsender=sender; tuneSenderFor(st); } }
@@ -826,7 +828,8 @@ function tuneSenderFor(st){ const sender=st.vsender||(st.pc.getSenders&&st.pc.ge
 function stopShare(){ if(!screenStream) return; for(const track of screenStream.getTracks()){ track.stop(); for(const st of peers.values()){ const s=st.pc.getSenders().find(se=>se.track===track); if(s) try{st.pc.removeTrack(s);}catch(_){} } }
   screenStream=null; screenSpec='—'; pruneStreams(); const t=tiles.get('me'); if(t){ t.video.srcObject=null; setHasVid('me',false); setSharing('me',false); }
   if(focusKey==='me') setFocus(null);
-  updateCallControls(); broadcastState(); toast('Transmissão encerrada','#ff2d7a'); }
+  updateCallControls(); broadcastState(); sendWS({type:'sharing',on:false});
+  toast('Transmissão encerrada','#ff2d7a'); }
 
 /* ---------- SDP ---------- */
 function preferCodec(kind,mime){ const caps=RTCRtpSender.getCapabilities&&RTCRtpSender.getCapabilities(kind); if(!caps) return null; mime=mime.toLowerCase();
@@ -1317,6 +1320,27 @@ async function doAuth(){ showLoginErr(''); $('authbtn').disabled=true; $('authbt
   try{ const path=authMode==='reg'?'/api/register':'/api/login'; const body=authMode==='reg'?{email,password,nick}:{email,password};
     const r=await api(path,'POST',body); TOKEN=r.token; localStorage.setItem('mimo_token',TOKEN); enterApp(r.user,r.servers);
   }catch(e){ showLoginErr(e.message); SND.err(); } finally{ $('authbtn').disabled=false; setAuthMode(authMode); } }
+/* link do Discord: tela.mauriciosts.com/?sala=<id> cai direto na transmissão */
+function pendingRoom(){ const q=new URLSearchParams(location.search).get('sala')
+    || (location.hash.match(/sala=(\d+)/)||[])[1];
+  return q?Number(q):null; }
+function pendingInvite(){ return new URLSearchParams(location.search).get('convite')||null; }
+function clearRoomParam(){ try{ const u=new URL(location.href); u.searchParams.delete('sala'); u.searchParams.delete('convite');
+  if(u.hash.includes('sala=')) u.hash='';
+  history.replaceState(null,'',u.pathname+u.search+u.hash); }catch(_){} }
+function enterRoomById(id){
+  for(const srv of SERVERS){ const ch=srv.channels.find(c=>c.id===id&&c.kind==='voice');
+    if(ch){ curServer=srv; selectServer(srv.id); joinVoice(ch); return true; } }
+  return false; }
+async function openDeepLink(){
+  const id=pendingRoom(); if(!id) return false;
+  const inv=pendingInvite(); clearRoomParam();
+  if(enterRoomById(id)) return true;
+  if(inv){ try{ const r=await api('/api/join','POST',{invite:inv},TOKEN); SERVERS=r.servers; renderRail();
+      if(enterRoomById(id)){ toast('Você entrou no servidor','#5df2a0'); return true; } }catch(e){} }
+  toast('Essa sala não existe mais ou você não tem acesso','#ffb020');
+  return false; }
+
 function enterApp(user,servers){ ME=user; SERVERS=servers||[]; sndInit();
   $('login').classList.add('hidden'); $('shell').classList.remove('hidden');
   $('uav').textContent=(ME.nick[0]||'?').toUpperCase(); $('uav').style.background=ME.color;
@@ -1324,9 +1348,12 @@ function enterApp(user,servers){ ME=user; SERVERS=servers||[]; sndInit();
   curServer=SERVERS[0]; renderRail(); if(curServer) selectServer(curServer.id);
   if(!canShare){ $('sharebtn').style.display='none'; $('emptyhint').innerHTML='Neste aparelho dá pra <b>assistir e ouvir</b> — quem transmite tela são os PCs.'; }
   setTab(isMobile()?'salas':'chat');
-  connectWS(); meterLoop(); statsLoop(); timeLoop(); refreshFriends(); fitViewport(); }
+  connectWS(); meterLoop(); statsLoop(); timeLoop(); refreshFriends(); fitViewport();
+  openDeepLink(); }
 function logout(){ localStorage.removeItem('mimo_token'); location.reload(); }
-async function boot(){ if(TOKEN){ try{ const r=await api('/api/me','GET',null,TOKEN); enterApp(r.user,r.servers); return; }catch(e){ localStorage.removeItem('mimo_token'); TOKEN=null; } } }
+async function boot(){
+  if(!TOKEN&&pendingRoom()) showLoginErr('Entre na sua conta (ou crie uma) pra assistir à transmissão.');
+  if(TOKEN){ try{ const r=await api('/api/me','GET',null,TOKEN); enterApp(r.user,r.servers); return; }catch(e){ localStorage.removeItem('mimo_token'); TOKEN=null; } } }
 
 /* ---------- binds ---------- */
 $('tab-login').onclick=()=>setAuthMode('login'); $('tab-reg').onclick=()=>setAuthMode('reg');

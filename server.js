@@ -345,6 +345,46 @@ function leaveVoice(uid) {
   if (voiceRooms.get(cid).size === 0) voiceRooms.delete(cid);
 }
 
+// ---- aviso no Discord quando alguém começa a transmitir ----
+// A URL vem do .env (é um segredo: quem tem ela posta no canal). Um aviso por
+// pessoa a cada 45s, pra um clique errado em transmitir/parar não virar spam.
+const DISCORD_WEBHOOK = process.env.TELA_DISCORD_WEBHOOK || '';
+const SITE_URL = process.env.TELA_SITE_URL || 'https://tela.mauriciosts.com';
+const lastShareNotify = new Map();
+function notifyShareStarted(uid, user, cid) {
+  if (!DISCORD_WEBHOOK) return;
+  const t = Date.now();
+  if (t - (lastShareNotify.get(uid) || 0) < 45000) return;
+  lastShareNotify.set(uid, t);
+  const ch = db.prepare('SELECT name,server FROM channels WHERE id=?').get(cid);
+  const srv = ch && db.prepare('SELECT name FROM servers WHERE id=?').get(ch.server);
+  const gente = (voiceRooms.get(cid)?.size) || 1;
+  // o convite vai junto: quem ainda não é do servidor entra pelo próprio link
+  const inv = srv && db.prepare('SELECT invite FROM servers WHERE id=?').get(ch.server)?.invite;
+  const link = `${SITE_URL}/?sala=${cid}${inv ? `&convite=${inv}` : ''}`;
+  const body = {
+    username: 'MIMO',
+    avatar_url: `${SITE_URL}/logo.jpg`,
+    content: `🔴 **${user.nick}** está transmitindo em **${ch?.name || 'call'}** — assista: ${link}`,
+    embeds: [{
+      title: `▶ Assistir a transmissão de ${user.nick}`,
+      url: link,
+      description: `Sala **${ch?.name || 'call'}**${srv ? ` · ${srv.name}` : ''}\n${gente} ${gente === 1 ? 'pessoa' : 'pessoas'} na call\n\nO link entra direto na sala (pede login na primeira vez).`,
+      color: 0xceff36,
+      timestamp: new Date().toISOString(),
+    }],
+    allowed_mentions: { parse: [] },      // nunca marca @everyone/@here
+  };
+  const url = DISCORD_WEBHOOK + (DISCORD_WEBHOOK.includes('?') ? '&' : '?') + 'wait=true';
+  fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(6000),
+  }).then((r) => console.log(r.ok ? `discord: avisou que ${user.nick} está transmitindo` : `discord: webhook respondeu ${r.status}`))
+    .catch((e) => console.warn('discord: webhook falhou —', e.message));   // nunca derruba a call
+}
+
 function doVoiceJoin(sock, uid, user, cid) {
   const ch = db.prepare('SELECT * FROM channels WHERE id=?').get(cid);
   if (!ch || ch.kind !== 'voice') return;
@@ -418,6 +458,13 @@ wss.on('connection', (sock, req) => {
       doVoiceJoin(sock, uid, user, want);   // não estava mesmo na sala: entra
       return;
     }
+    if (m.type === 'sharing') {
+      const cid = roomOf(uid);
+      if (cid == null || voiceSock.get(uid) !== sock) return;   // só quem está mesmo na call
+      if (m.on) notifyShareStarted(uid, user, cid);
+      return;
+    }
+
     if (m.type === 'voice-leave') { if (!voiceSock.has(uid) || voiceSock.get(uid) === sock) leaveVoice(uid); return; }
 
     // sinalização mesh direcionada (description/candidate/state)
