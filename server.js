@@ -437,11 +437,12 @@ function scheduleWebhookDelete(hook, msgId, uid) {
 }
 /* transmissão acabou: o convite morreu junto, então o aviso some na hora
    (o TTL continua valendo como rede de segurança pra quem cair da rede) */
+const GRACA_MS = 25000;   // trocar de janela = parar e começar de novo; o aviso espera
 function notifyShareEnded(uid) {
-  const linhas = db.prepare('SELECT * FROM webhook_msgs WHERE uid=?').all(uid);
-  if (!linhas.length) return;
-  db.prepare('UPDATE webhook_msgs SET del_at=1 WHERE uid=?').run(uid);
-  sweepWebhookMsgs().catch(() => {});
+  lastShareNotify.delete(uid);                       // pode avisar de novo assim que voltar
+  const n = db.prepare('UPDATE webhook_msgs SET del_at=? WHERE uid=? AND del_at>?')
+    .run(now() + GRACA_MS, uid, now() + GRACA_MS).changes;
+  if (n) console.log(`discord: transmissão de uid ${uid} acabou — aviso some em ${GRACA_MS / 1000}s`);
 }
 async function sweepWebhookMsgs() {
   const vencidas = db.prepare('SELECT * FROM webhook_msgs WHERE del_at<=?').all(now());
@@ -449,13 +450,14 @@ async function sweepWebhookMsgs() {
     try {
       const r = await fetch(`${row.hook}/messages/${row.msg}`, { method: 'DELETE', signal: AbortSignal.timeout(6000) });
       // 404 = alguém já apagou na mão; some da fila do mesmo jeito
-      if (r.ok || r.status === 404) db.prepare('DELETE FROM webhook_msgs WHERE id=?').run(row.id);
+      if (r.ok || r.status === 404) { db.prepare('DELETE FROM webhook_msgs WHERE id=?').run(row.id);
+        console.log(`discord: aviso ${row.msg} apagado`); }
       else if (r.status === 429) continue;                       // rate limit: tenta na próxima volta
       else { console.warn('discord: apagar respondeu', r.status); db.prepare('DELETE FROM webhook_msgs WHERE id=?').run(row.id); }
     } catch (e) { console.warn('discord: falha ao apagar —', e.message); }   // fica na fila
   }
 }
-setInterval(() => { sweepWebhookMsgs().catch(() => {}); }, 60000).unref();
+setInterval(() => { sweepWebhookMsgs().catch(() => {}); }, 10000).unref();
 sweepWebhookMsgs().catch(() => {});   // pega o que venceu enquanto o servidor estava fora
 function notifyShareStarted(uid, user, cid) {
   const ch = db.prepare('SELECT name,server FROM channels WHERE id=?').get(cid);
@@ -463,7 +465,17 @@ function notifyShareStarted(uid, user, cid) {
   const hooks = ch ? hooksForServer(ch.server, srv && srv.name) : [];
   if (!hooks.length) return;                       // esse servidor não avisa em lugar nenhum
   const t = Date.now();
-  if (t - (lastShareNotify.get(uid) || 0) < 45000) return;
+  const ttl = DISCORD_TTL_MIN > 0 ? Math.round(DISCORD_TTL_MIN * 60000) : 86400000;
+  // aviso ainda vivo dessa pessoa: só renova o prazo (evita apagar e repostar
+  // toda vez que ela troca a janela compartilhada)
+  const vivos = db.prepare('SELECT count(*) c FROM webhook_msgs WHERE uid=?').get(uid).c;
+  if (vivos) {
+    db.prepare('UPDATE webhook_msgs SET del_at=? WHERE uid=?').run(t + ttl, uid);
+    lastShareNotify.set(uid, t);
+    console.log(`discord: ${user.nick} voltou a transmitir — aviso mantido`);
+    return;
+  }
+  if (t - (lastShareNotify.get(uid) || 0) < 15000) return;    // trava só o flood de cliques
   lastShareNotify.set(uid, t);
   const gente = (voiceRooms.get(cid)?.size) || 1;
   // o convite vai junto: quem ainda não é do servidor entra pelo próprio link
@@ -576,8 +588,8 @@ wss.on('connection', (sock, req) => {
     if (m.type === 'sharing') {
       const cid = roomOf(uid);
       if (cid == null || voiceSock.get(uid) !== sock) return;   // só quem está mesmo na call
-      if (m.on) { transmitindo.add(uid); notifyShareStarted(uid, user, cid); }
-      else if (transmitindo.delete(uid)) notifyShareEnded(uid);
+      if (m.on) { transmitindo.add(uid); console.log(`tela: ${user.nick} começou a transmitir na sala ${cid}`); notifyShareStarted(uid, user, cid); }
+      else if (transmitindo.delete(uid)) { console.log(`tela: ${user.nick} parou de transmitir`); notifyShareEnded(uid); }
       return;
     }
 
