@@ -4,3 +4,4 @@ node_modules/
 mimo.db
 mimo.db-wal
 mimo.db-shm
+*.bak-*

@@ -86,8 +86,11 @@ db.exec(`
     PRIMARY KEY (a, b)
   );
 `);
+// migração idempotente: capacidade da sala de voz (salas antigas ficam null → 5)
+try { db.exec('ALTER TABLE channels ADD COLUMN cap INTEGER'); } catch { /* já existe */ }
 
 const COLORS = ['#ceff36', '#ff2d7a', '#35e5ff', '#ffb020', '#a97bff', '#5df2a0'];
+const FORMATS = ['voz', 'video', 'palco', 'assistir', 'torneio', 'estudo'];
 const pick = (a) => a[Math.floor(Math.random() * a.length)];
 const now = () => Date.now();
 
@@ -151,7 +154,7 @@ function userServers(uid) {
   `).all(uid);
   return rows.map((s) => ({
     id: s.id, name: s.name, color: s.color, invite: s.invite,
-    channels: db.prepare('SELECT id,name,kind,fmt,pos FROM channels WHERE server=? ORDER BY pos,id').all(s.id),
+    channels: db.prepare('SELECT id,name,kind,fmt,pos,cap FROM channels WHERE server=? ORDER BY pos,id').all(s.id),
   }));
 }
 function ensureMember(uid, sid) {
@@ -241,6 +244,19 @@ async function api(req, res, url) {
       db.prepare('INSERT INTO channels (server,name,kind,fmt,pos) VALUES (?,?,?,?,?)').run(sid, 'chat-geral', 'text', null, 0);
       db.prepare('INSERT INTO channels (server,name,kind,fmt,pos) VALUES (?,?,?,?,?)').run(sid, 'Sala Geral', 'voice', 'voz', 1);
       ensureMember(me.id, sid);
+      return sendJSON(res, 200, { servers: userServers(me.id) });
+    }
+
+    if (p === '/api/rooms' && req.method === 'POST') {
+      const { server, name, fmt, cap } = await readBody(req);
+      const sid = Number(server);
+      if (!db.prepare('SELECT 1 FROM members WHERE server=? AND user=?').get(sid, me.id)) return sendJSON(res, 403, { error: 'Você não está nesse servidor.' });
+      const nm = String(name || '').trim().slice(0, 30);
+      if (nm.length < 2) return sendJSON(res, 400, { error: 'Nome curto demais.' });
+      const f = FORMATS.includes(fmt) ? fmt : 'voz';
+      const cp = Math.max(2, Math.min(200, Math.round(Number(cap) || 5)));
+      const pos = (db.prepare('SELECT MAX(pos) m FROM channels WHERE server=?').get(sid).m || 0) + 1;
+      db.prepare('INSERT INTO channels (server,name,kind,fmt,pos,cap) VALUES (?,?,?,?,?,?)').run(sid, nm, 'voice', f, pos, cp);
       return sendJSON(res, 200, { servers: userServers(me.id) });
     }
 
