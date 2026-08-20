@@ -86,6 +86,15 @@ db.exec(`
     PRIMARY KEY (a, b)
   );
 `);
+// avisos postados no Discord que devem sumir depois (link de transmissão vence)
+db.exec(`
+  CREATE TABLE IF NOT EXISTS webhook_msgs (
+    id     INTEGER PRIMARY KEY AUTOINCREMENT,
+    hook   TEXT NOT NULL,
+    msg    TEXT NOT NULL,
+    del_at INTEGER NOT NULL
+  );
+`);
 // migração idempotente: capacidade da sala de voz (salas antigas ficam null → 5)
 try { db.exec('ALTER TABLE channels ADD COLUMN cap INTEGER'); } catch { /* já existe */ }
 
@@ -351,7 +360,31 @@ function leaveVoice(uid) {
 const DISCORD_WEBHOOKS = (process.env.TELA_DISCORD_WEBHOOK || '')
   .split(/[\s,;]+/).map((u) => u.trim()).filter((u) => u.startsWith('http'));   // um ou vários canais
 const SITE_URL = process.env.TELA_SITE_URL || 'https://tela.mauriciosts.com';
+const DISCORD_TTL_MIN = Number(process.env.TELA_DISCORD_TTL_MIN || 60);   // 0 = não apaga
 const lastShareNotify = new Map();
+
+/* O aviso é um convite pra uma transmissão ao vivo: depois de TTL ele vira lixo
+   com link morto, então some sozinho. A fila fica no banco pra um restart no
+   meio do caminho não deixar mensagem órfã. */
+function scheduleWebhookDelete(hook, msgId) {
+  if (!(DISCORD_TTL_MIN > 0) || !msgId) return;
+  db.prepare('INSERT INTO webhook_msgs (hook,msg,del_at) VALUES (?,?,?)')
+    .run(hook, String(msgId), now() + Math.round(DISCORD_TTL_MIN * 60000));
+}
+async function sweepWebhookMsgs() {
+  const vencidas = db.prepare('SELECT * FROM webhook_msgs WHERE del_at<=?').all(now());
+  for (const row of vencidas) {
+    try {
+      const r = await fetch(`${row.hook}/messages/${row.msg}`, { method: 'DELETE', signal: AbortSignal.timeout(6000) });
+      // 404 = alguém já apagou na mão; some da fila do mesmo jeito
+      if (r.ok || r.status === 404) db.prepare('DELETE FROM webhook_msgs WHERE id=?').run(row.id);
+      else if (r.status === 429) continue;                       // rate limit: tenta na próxima volta
+      else { console.warn('discord: apagar respondeu', r.status); db.prepare('DELETE FROM webhook_msgs WHERE id=?').run(row.id); }
+    } catch (e) { console.warn('discord: falha ao apagar —', e.message); }   // fica na fila
+  }
+}
+setInterval(() => { sweepWebhookMsgs().catch(() => {}); }, 60000).unref();
+sweepWebhookMsgs().catch(() => {});   // pega o que venceu enquanto o servidor estava fora
 function notifyShareStarted(uid, user, cid) {
   if (!DISCORD_WEBHOOKS.length) return;
   const t = Date.now();
@@ -384,10 +417,13 @@ function notifyShareStarted(uid, user, cid) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
       signal: AbortSignal.timeout(6000),
-    }).then((r) => console.log(r.ok
-        ? `discord[${alvo}]: avisou que ${user.nick} está transmitindo`
-        : `discord[${alvo}]: webhook respondeu ${r.status}`))
-      .catch((e) => console.warn(`discord[${alvo}]: falhou —`, e.message));   // nunca derruba a call
+    }).then(async (r) => {
+      if (!r.ok) { console.warn(`discord[${alvo}]: webhook respondeu ${r.status}`); return; }
+      const msg = await r.json().catch(() => null);
+      scheduleWebhookDelete(hook, msg && msg.id);
+      console.log(`discord[${alvo}]: avisou que ${user.nick} está transmitindo`
+        + (DISCORD_TTL_MIN > 0 ? ` (some em ${DISCORD_TTL_MIN}min)` : ''));
+    }).catch((e) => console.warn(`discord[${alvo}]: falhou —`, e.message));   // nunca derruba a call
   }
 }
 
