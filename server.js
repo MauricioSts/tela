@@ -348,11 +348,12 @@ function leaveVoice(uid) {
 // ---- aviso no Discord quando alguém começa a transmitir ----
 // A URL vem do .env (é um segredo: quem tem ela posta no canal). Um aviso por
 // pessoa a cada 45s, pra um clique errado em transmitir/parar não virar spam.
-const DISCORD_WEBHOOK = process.env.TELA_DISCORD_WEBHOOK || '';
+const DISCORD_WEBHOOKS = (process.env.TELA_DISCORD_WEBHOOK || '')
+  .split(/[\s,;]+/).map((u) => u.trim()).filter((u) => u.startsWith('http'));   // um ou vários canais
 const SITE_URL = process.env.TELA_SITE_URL || 'https://tela.mauriciosts.com';
 const lastShareNotify = new Map();
 function notifyShareStarted(uid, user, cid) {
-  if (!DISCORD_WEBHOOK) return;
+  if (!DISCORD_WEBHOOKS.length) return;
   const t = Date.now();
   if (t - (lastShareNotify.get(uid) || 0) < 45000) return;
   lastShareNotify.set(uid, t);
@@ -375,14 +376,19 @@ function notifyShareStarted(uid, user, cid) {
     }],
     allowed_mentions: { parse: [] },      // nunca marca @everyone/@here
   };
-  const url = DISCORD_WEBHOOK + (DISCORD_WEBHOOK.includes('?') ? '&' : '?') + 'wait=true';
-  fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-    signal: AbortSignal.timeout(6000),
-  }).then((r) => console.log(r.ok ? `discord: avisou que ${user.nick} está transmitindo` : `discord: webhook respondeu ${r.status}`))
-    .catch((e) => console.warn('discord: webhook falhou —', e.message));   // nunca derruba a call
+  for (const hook of DISCORD_WEBHOOKS) {
+    const url = hook + (hook.includes('?') ? '&' : '?') + 'wait=true';
+    const alvo = hook.split('/').slice(-2, -1)[0];   // id do webhook, só pro log
+    fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(6000),
+    }).then((r) => console.log(r.ok
+        ? `discord[${alvo}]: avisou que ${user.nick} está transmitindo`
+        : `discord[${alvo}]: webhook respondeu ${r.status}`))
+      .catch((e) => console.warn(`discord[${alvo}]: falhou —`, e.message));   // nunca derruba a call
+  }
 }
 
 function doVoiceJoin(sock, uid, user, cid) {
