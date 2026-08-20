@@ -97,6 +97,9 @@ db.exec(`
 `);
 // migração idempotente: capacidade da sala de voz (salas antigas ficam null → 5)
 try { db.exec('ALTER TABLE channels ADD COLUMN cap INTEGER'); } catch { /* já existe */ }
+// servidor público = todo mundo que loga entra sozinho. Privado = só com convite.
+try { db.exec('ALTER TABLE servers ADD COLUMN public INTEGER NOT NULL DEFAULT 0'); } catch { /* já existe */ }
+db.prepare("UPDATE servers SET public=1 WHERE invite='MIMO'").run();
 
 const COLORS = ['#ceff36', '#ff2d7a', '#35e5ff', '#ffb020', '#a97bff', '#5df2a0'];
 const FORMATS = ['voz', 'video', 'palco', 'assistir', 'torneio', 'estudo'];
@@ -163,8 +166,12 @@ function userServers(uid) {
   `).all(uid);
   return rows.map((s) => ({
     id: s.id, name: s.name, color: s.color, invite: s.invite,
+    owner: s.owner, dono: s.owner === uid, publico: !!s.public,
     channels: db.prepare('SELECT id,name,kind,fmt,pos,cap FROM channels WHERE server=? ORDER BY pos,id').all(s.id),
   }));
+}
+function joinPublicServers(uid) {
+  for (const s of db.prepare('SELECT id FROM servers WHERE public=1').all()) ensureMember(uid, s.id);
 }
 function ensureMember(uid, sid) {
   db.prepare('INSERT OR IGNORE INTO members (server,user) VALUES (?,?)').run(sid, uid);
@@ -215,7 +222,7 @@ async function api(req, res, url) {
       const info = db.prepare('INSERT INTO users (email,nick,tag,pass,color,created) VALUES (?,?,?,?,?,?)')
         .run(em, nk, uniqueTag(nk), hashPass(String(password)), color, now());
       const u = db.prepare('SELECT * FROM users WHERE id=?').get(info.lastInsertRowid);
-      ensureMember(u.id, MIMO_SERVER);
+      joinPublicServers(u.id);
       return sendJSON(res, 200, { token: signToken({ uid: u.id }), user: publicUser(u), servers: userServers(u.id) });
     }
 
@@ -223,7 +230,7 @@ async function api(req, res, url) {
       const { email, password } = await readBody(req);
       const u = db.prepare('SELECT * FROM users WHERE email=?').get(String(email || '').trim().toLowerCase());
       if (!u || !verifyPass(String(password || ''), u.pass)) return sendJSON(res, 401, { error: 'E-mail ou senha incorretos.' });
-      ensureMember(u.id, MIMO_SERVER);
+      joinPublicServers(u.id);
       return sendJSON(res, 200, { token: signToken({ uid: u.id }), user: publicUser(u), servers: userServers(u.id) });
     }
 
@@ -232,7 +239,7 @@ async function api(req, res, url) {
     if (!me) return sendJSON(res, 401, { error: 'auth' });
 
     if (p === '/api/me' && req.method === 'GET') {
-      ensureMember(me.id, MIMO_SERVER);
+      joinPublicServers(me.id);
       return sendJSON(res, 200, { user: publicUser(me), servers: userServers(me.id), ...friendsOf(me.id) });
     }
 
@@ -269,12 +276,36 @@ async function api(req, res, url) {
       return sendJSON(res, 200, { servers: userServers(me.id) });
     }
 
+    // gera um convite novo e invalida o link antigo (só o dono)
+    if (p === '/api/servers/invite' && req.method === 'POST') {
+      const { server } = await readBody(req);
+      const srv = db.prepare('SELECT * FROM servers WHERE id=?').get(Number(server));
+      if (!srv) return sendJSON(res, 404, { error: 'Servidor não encontrado.' });
+      if (srv.owner !== me.id) return sendJSON(res, 403, { error: 'Só quem criou o servidor troca o convite.' });
+      if (srv.invite === 'MIMO') return sendJSON(res, 400, { error: 'O convite do servidor público é fixo.' });
+      let code; do { code = crypto.randomBytes(4).toString('hex'); }
+      while (db.prepare('SELECT 1 FROM servers WHERE invite=?').get(code));
+      db.prepare('UPDATE servers SET invite=? WHERE id=?').run(code, srv.id);
+      return sendJSON(res, 200, { invite: code, servers: userServers(me.id) });
+    }
+
+    // público = quem cria conta entra sozinho; privado = só por convite
+    if (p === '/api/servers/public' && req.method === 'POST') {
+      const { server, publico } = await readBody(req);
+      const srv = db.prepare('SELECT * FROM servers WHERE id=?').get(Number(server));
+      if (!srv) return sendJSON(res, 404, { error: 'Servidor não encontrado.' });
+      if (srv.owner !== me.id) return sendJSON(res, 403, { error: 'Só quem criou o servidor muda isso.' });
+      db.prepare('UPDATE servers SET public=? WHERE id=?').run(publico ? 1 : 0, srv.id);
+      if (publico) for (const u of db.prepare('SELECT id FROM users').all()) ensureMember(u.id, srv.id);
+      return sendJSON(res, 200, { servers: userServers(me.id) });
+    }
+
     if (p === '/api/join' && req.method === 'POST') {
       const { invite } = await readBody(req);
       const s = db.prepare('SELECT id FROM servers WHERE invite=?').get(String(invite || '').trim());
-      if (!s) return sendJSON(res, 404, { error: 'Convite inválido.' });
+      if (!s) return sendJSON(res, 404, { error: 'Convite inválido ou expirado.' });
       ensureMember(me.id, s.id);
-      return sendJSON(res, 200, { servers: userServers(me.id) });
+      return sendJSON(res, 200, { server: s.id, servers: userServers(me.id) });
     }
 
     if (p === '/api/friends/request' && req.method === 'POST') {
@@ -357,8 +388,28 @@ function leaveVoice(uid) {
 // ---- aviso no Discord quando alguém começa a transmitir ----
 // A URL vem do .env (é um segredo: quem tem ela posta no canal). Um aviso por
 // pessoa a cada 45s, pra um clique errado em transmitir/parar não virar spam.
-const DISCORD_WEBHOOKS = (process.env.TELA_DISCORD_WEBHOOK || '')
-  .split(/[\s,;]+/).map((u) => u.trim()).filter((u) => u.startsWith('http'));   // um ou vários canais
+// Roteamento: cada servidor do MIMO avisa no SEU canal do Discord.
+//   TELA_DISCORD_HOOKS=mimolandia=https://...;MIMO=https://...
+// A chave é o nome (sem diferenciar maiúscula) ou o id do servidor. Um servidor
+// sem regra cai no TELA_DISCORD_WEBHOOK; se ele estiver vazio, não avisa ninguém.
+const parseHookList = (v) => (v || '').split(/[\s,;]+/).map((u) => u.trim()).filter((u) => u.startsWith('http'));
+const DISCORD_WEBHOOKS = parseHookList(process.env.TELA_DISCORD_WEBHOOK);
+const DISCORD_MAP = new Map();
+for (const entry of (process.env.TELA_DISCORD_HOOKS || '').split(/[;\n]+/)) {
+  const i = entry.indexOf('=');
+  if (i < 1) continue;
+  const chave = entry.slice(0, i).trim().toLowerCase();
+  const urls = parseHookList(entry.slice(i + 1));
+  if (!chave || !urls.length) continue;
+  DISCORD_MAP.set(chave, [...(DISCORD_MAP.get(chave) || []), ...urls]);
+}
+function hooksForServer(sid, nome) {
+  const achados = [
+    ...(DISCORD_MAP.get(String(sid)) || []),
+    ...(nome ? DISCORD_MAP.get(String(nome).trim().toLowerCase()) || [] : []),
+  ];
+  return achados.length ? [...new Set(achados)] : DISCORD_WEBHOOKS;
+}
 const SITE_URL = process.env.TELA_SITE_URL || 'https://tela.mauriciosts.com';
 const DISCORD_TTL_MIN = Number(process.env.TELA_DISCORD_TTL_MIN || 60);   // 0 = não apaga
 const lastShareNotify = new Map();
@@ -386,12 +437,13 @@ async function sweepWebhookMsgs() {
 setInterval(() => { sweepWebhookMsgs().catch(() => {}); }, 60000).unref();
 sweepWebhookMsgs().catch(() => {});   // pega o que venceu enquanto o servidor estava fora
 function notifyShareStarted(uid, user, cid) {
-  if (!DISCORD_WEBHOOKS.length) return;
+  const ch = db.prepare('SELECT name,server FROM channels WHERE id=?').get(cid);
+  const srv = ch && db.prepare('SELECT name FROM servers WHERE id=?').get(ch.server);
+  const hooks = ch ? hooksForServer(ch.server, srv && srv.name) : [];
+  if (!hooks.length) return;                       // esse servidor não avisa em lugar nenhum
   const t = Date.now();
   if (t - (lastShareNotify.get(uid) || 0) < 45000) return;
   lastShareNotify.set(uid, t);
-  const ch = db.prepare('SELECT name,server FROM channels WHERE id=?').get(cid);
-  const srv = ch && db.prepare('SELECT name FROM servers WHERE id=?').get(ch.server);
   const gente = (voiceRooms.get(cid)?.size) || 1;
   // o convite vai junto: quem ainda não é do servidor entra pelo próprio link
   const inv = srv && db.prepare('SELECT invite FROM servers WHERE id=?').get(ch.server)?.invite;
@@ -409,7 +461,7 @@ function notifyShareStarted(uid, user, cid) {
     }],
     allowed_mentions: { parse: [] },      // nunca marca @everyone/@here
   };
-  for (const hook of DISCORD_WEBHOOKS) {
+  for (const hook of hooks) {
     const url = hook + (hook.includes('?') ? '&' : '?') + 'wait=true';
     const alvo = hook.split('/').slice(-2, -1)[0];   // id do webhook, só pro log
     fetch(url, {
@@ -526,5 +578,9 @@ wss.on('connection', (sock, req) => {
 });
 
 server.listen(PORT, () => {
+  for (const srv of db.prepare('SELECT id,name FROM servers').all()) {
+    const hs = hooksForServer(srv.id, srv.name).map((h) => h.split('/').slice(-2, -1)[0]);
+    console.log(`discord: "${srv.name}" avisa em ${hs.length ? hs.join(', ') : '(nenhum canal)'}`);
+  }
   console.log(`MIMO ouvindo em http://0.0.0.0:${PORT} — db=${DB_PATH}, voz mesh até ${MAX_VOICE}/sala`);
 });

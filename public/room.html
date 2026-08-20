@@ -163,6 +163,21 @@
   .ftab.on{background:rgba(53,229,255,.10);color:var(--text);border-left-color:var(--cyan)}
   .ftab .cnt{margin-left:auto;font-family:var(--mono);font-size:10px;color:var(--text-4)}
 
+  /* barra de ações do servidor (convite/privacidade) */
+  #srvbar{display:flex;align-items:center;gap:10px;padding:10px 12px;border-bottom:1px solid var(--line);background:rgba(255,255,255,.02)}
+  #srvbar .tipo{font-family:var(--mono);font-size:8.5px;letter-spacing:.16em;padding:5px 8px;border:1px solid var(--line-strong);color:var(--text-4);flex:none}
+  #srvbar .tipo.priv{color:var(--amber);border-color:rgba(255,176,32,.5)}
+  #srvbar .tipo.pub{color:var(--mint);border-color:rgba(93,242,160,.5)}
+  #srvbar .sp{flex:1}
+  #srvbar .inv{min-height:40px;padding:0 14px;display:flex;align-items:center;gap:7px;background:var(--lime);color:#07080a;
+    font-family:var(--disp);font-weight:700;font-size:12px;letter-spacing:.08em;text-transform:uppercase;flex:none}
+  .invbox{display:flex;align-items:center;gap:10px;padding:14px;background:var(--panel-deep);border:1px solid var(--line-strong);
+    border-left:3px solid var(--lime);margin-bottom:16px;overflow:hidden}
+  .invbox code{font-family:var(--mono);font-size:12px;color:var(--lime);word-break:break-all;flex:1;min-width:0}
+  .invgrid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:16px}
+  .invgrid .mbtn{margin:0}
+  .invgrid .ghost{background:none;border:1px solid var(--line-strong);color:var(--text-2)}
+
   #upanel{border-top:1px solid var(--line);padding:14px 16px calc(14px + var(--sab));display:flex;align-items:center;gap:11px;background:var(--panel-deep)}
   #upanel .av{width:36px;height:36px;font-size:14px;flex:none}
   #upanel .id{min-width:0;flex:1}
@@ -580,6 +595,11 @@
 
     <div id="side-server" style="display:flex;flex-direction:column;flex:1;min-height:0">
       <div class="side-hd"><div class="k">SERVIDOR</div><div class="nm" id="srvname">MIMO</div></div>
+      <div id="srvbar">
+        <span class="tipo" id="srvtipo">—</span>
+        <span class="sp"></span>
+        <button class="inv" id="btn-invite">Convidar</button>
+      </div>
       <div class="side-body">
         <div class="grp">CANAIS DE TEXTO</div>
         <div id="textchans"></div>
@@ -1105,7 +1125,10 @@ async function openTextChannel(ch,jump){ curTextChan=ch.id; curTextName=ch.name;
   let msgs=chatHist.get(ch.id);
   if(!msgs){ try{ const r=await api('/api/messages?channel='+ch.id,'GET',null,TOKEN); msgs=r.messages; chatHist.set(ch.id,msgs); }catch(e){ msgs=[]; } }
   renderChat(msgs); renderOnline();
-  if(jump!==false) setTab('chat'); else if(!isMobile()) showView('chat'); }
+  // o fetch acima pode demorar: se nesse meio tempo a pessoa entrou numa call,
+  // não arrasta ela de volta pro chat (era o que tirava o usuário da sala)
+  if(jump!==false){ setTab('chat'); return; }
+  if(!isMobile() && curView!=='call' && !curVoiceChan) showView('chat'); }
 function renderOnline(){ const box=$('onlinehex'); if(!box||!ME) return; box.innerHTML='';
   const list=[{n:ME.nick,c:ME.color},...[...peers.values()].map(s=>({n:s.name||'?',c:s.color}))].slice(0,6);
   for(const p of list){ const a=document.createElement('div'); a.className='hex av'; a.textContent=(p.n[0]||'?').toUpperCase(); a.style.background=p.c; box.appendChild(a); }
@@ -1131,6 +1154,8 @@ function renderRail(){
 function selectServer(id){ curServer=SERVERS.find(s=>s.id===id)||SERVERS[0]; if(!curServer) return;
   showServerPanel();
   $('srvname').textContent=curServer.name; renderRail();
+  const tp=$('srvtipo'); tp.textContent=curServer.publico?'PÚBLICO':'PRIVADO';
+  tp.className='tipo '+(curServer.publico?'pub':'priv');
   const tc=$('textchans'); tc.innerHTML=''; const vc=$('voicechans'); vc.innerHTML='';
   for(const ch of curServer.channels){
     if(ch.kind==='text'){
@@ -1343,6 +1368,51 @@ function modalServers(){
   $('mbox').querySelectorAll('.srvpick .row').forEach(r=>r.onclick=()=>{ selectServer(Number(r.dataset.id)); closeModal(); setTab('salas'); });
   $('sp-new').onclick=()=>{ closeModal(); modalCreateServer(); };
 }
+function inviteLink(srv){ return location.origin+'/?convite='+srv.invite; }
+function modalInvite(){
+  const srv=curServer; if(!srv) return;
+  const link=inviteLink(srv);
+  const dono=!!srv.dono, fixo=srv.invite==='MIMO';
+  openModal(`<div class="m-hd"><div><div class="m-k">// ${srv.publico?'SERVIDOR PÚBLICO':'SÓ QUEM TEM O LINK'}</div>
+      <div class="m-t">Convidar pro ${esc(srv.name)}</div></div><button class="m-x" onclick="closeModal()">✕</button></div>
+    <div class="mlabel">Link do convite</div>
+    <div class="invbox"><code id="inv-link">${esc(link)}</code></div>
+    <div class="invgrid">
+      <button class="mbtn cut-btn" id="inv-copy">Copiar link</button>
+      <button class="mbtn ghost" id="inv-share">Compartilhar</button>
+    </div>
+    <div class="mnote">${srv.publico
+      ? 'Este servidor é <b>público</b>: quem criar conta no MIMO já entra nele. O link serve como atalho.'
+      : 'Este servidor é <b>privado</b>: só entra quem abrir este link. Quem não tiver conta cria na hora e já cai aqui dentro.'}</div>
+    ${dono&&!fixo?`<div class="mrow"><div class="toggle${srv.publico?' on':''}" id="inv-pub"><div class="track"><i></i></div>
+        <span id="inv-publ">${srv.publico?'PÚBLICO':'PRIVADO'}</span></div>
+      <span class="sp" style="flex:1"></span>
+      <button class="mbtn ghost" style="width:auto;padding:12px 16px;min-height:44px" id="inv-new">Gerar novo link</button></div>
+      <div class="mnote">Gerar um link novo <b>derruba o antigo</b> — quem já entrou continua dentro.</div>`:''}`);
+  $('inv-copy').onclick=()=>copiarTexto(link);
+  $('inv-share').onclick=async()=>{
+    const dados={title:'MIMO · '+srv.name, text:`Entra no ${srv.name} comigo no MIMO`, url:link};
+    if(navigator.share){ try{ await navigator.share(dados); return; }catch(e){ if(e&&e.name==='AbortError') return; } }
+    copiarTexto(link); };
+  if($('inv-new')) $('inv-new').onclick=async()=>{
+    try{ const r=await api('/api/servers/invite','POST',{server:srv.id},TOKEN);
+      SERVERS=r.servers; curServer=SERVERS.find(x=>x.id===srv.id); renderRail(); closeModal(); modalInvite();
+      toast('Link novo gerado — o antigo parou de valer','#ceff36');
+    }catch(e){ toast(e.message,'#ff2d7a'); } };
+  if($('inv-pub')) $('inv-pub').onclick=async()=>{
+    const alvo=!srv.publico;
+    try{ const r=await api('/api/servers/public','POST',{server:srv.id,publico:alvo},TOKEN);
+      SERVERS=r.servers; curServer=SERVERS.find(x=>x.id===srv.id); selectServer(curServer.id); closeModal(); modalInvite();
+      toast(alvo?'Agora é público: quem criar conta entra sozinho':'Agora é privado: só por convite','#35e5ff');
+    }catch(e){ toast(e.message,'#ff2d7a'); } };
+}
+function copiarTexto(txt){
+  const ok=()=>toast('Link copiado','#5df2a0');
+  if(navigator.clipboard&&navigator.clipboard.writeText) return navigator.clipboard.writeText(txt).then(ok).catch(fb);
+  fb();
+  function fb(){ const i=document.createElement('input'); i.value=txt; document.body.appendChild(i); i.select(); i.setSelectionRange(0,99999);
+    try{ document.execCommand('copy'); ok(); }catch(_){ prompt('Copie o link:',txt); } i.remove(); } }
+
 function modalCreateServer(){ let color=SWATCHES[0];
   openModal(`<div class="m-hd"><div><div class="m-k">// COMUNIDADE</div><div class="m-t">Criar servidor</div></div><button class="m-x" onclick="closeModal()">✕</button></div>
     <div class="mlabel">Nome</div><input class="minput" id="cs-name" placeholder="ex: Firma do Caos" maxlength="30">
@@ -1404,11 +1474,19 @@ function enterRoomById(id){
     if(ch){ curServer=srv; selectServer(srv.id); joinVoice(ch); return true; } }
   return false; }
 async function openDeepLink(){
-  const id=pendingRoom(); if(!id) return false;
-  const inv=pendingInvite(); clearRoomParam();
-  if(enterRoomById(id)) return true;
-  if(inv){ try{ const r=await api('/api/join','POST',{invite:inv},TOKEN); SERVERS=r.servers; renderRail();
-      if(enterRoomById(id)){ toast('Você entrou no servidor','#5df2a0'); return true; } }catch(e){} }
+  const id=pendingRoom(), inv=pendingInvite();
+  if(!id&&!inv) return false;
+  clearRoomParam();
+  if(id&&enterRoomById(id)) return true;
+  if(inv){
+    try{
+      const r=await api('/api/join','POST',{invite:inv},TOKEN);
+      SERVERS=r.servers; renderRail();
+      if(id&&enterRoomById(id)){ toast('Você entrou no servidor','#5df2a0'); return true; }
+      const srv=SERVERS.find(x=>x.id===r.server)||SERVERS[SERVERS.length-1];
+      if(srv){ selectServer(srv.id); setTab('salas'); toast('Você entrou no '+srv.name,'#5df2a0'); return true; }
+    }catch(e){ toast(e.message||'Convite inválido','#ff2d7a'); return false; }
+  }
   toast('Essa sala não existe mais ou você não tem acesso','#ffb020');
   return false; }
 
@@ -1428,6 +1506,7 @@ function enterApp(user,servers){ ME=user; SERVERS=servers||[]; sndInit();
 function logout(){ localStorage.removeItem('mimo_token'); location.reload(); }
 async function boot(){
   if(!TOKEN&&pendingRoom()) showLoginErr('Entre na sua conta (ou crie uma) pra assistir à transmissão.');
+  else if(!TOKEN&&pendingInvite()){ setAuthMode('reg'); showLoginErr('Você recebeu um convite — crie sua conta pra entrar no servidor.'); }
   if(TOKEN){ try{ const r=await api('/api/me','GET',null,TOKEN); enterApp(r.user,r.servers); return; }catch(e){ localStorage.removeItem('mimo_token'); TOKEN=null; } } }
 
 /* ---------- binds ---------- */
@@ -1437,6 +1516,7 @@ $('seepass').onclick=()=>{ const i=$('in-pass'); i.type=i.type==='password'?'tex
 $('forgotlink').onclick=()=>toast('Recuperação por e-mail precisa de SMTP — fale com o admin','#ffb020');
 $('exitbtn').onclick=logout;
 $('amgbtn').onclick=()=>setTab('amigos');
+$('btn-invite').onclick=modalInvite;
 $('addsrv').onclick=modalCreateServer; $('addroom').onclick=(e)=>{ e.stopPropagation(); modalCreateRoom(); }; $('addgroup').onclick=modalCreateGroup;
 document.querySelectorAll('.ftab,#frtabs .ft2[data-tab]').forEach(t=>t.onclick=()=>setFriendTab(t.dataset.tab));
 $('f2-group').onclick=modalCreateGroup;
