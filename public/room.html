@@ -264,6 +264,30 @@
   #callinfo .rn{font-family:var(--disp);font-weight:700;font-size:15px;text-shadow:0 1px 8px #000;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   #callinfo .pc{font-family:var(--mono);font-size:9px;letter-spacing:.14em;color:var(--text-3);background:rgba(0,0,0,.5);padding:4px 8px;border-radius:20px;flex:none}
   #callinfo .sp{flex:1}
+  /* modo paisagem na marra: usado quando o navegador embutido não deixa girar */
+  body.rotated #gridwrap{position:fixed;top:50%;left:50%;z-index:60;
+    width:var(--app-h);height:100vw;transform:translate(-50%,-50%) rotate(90deg);transform-origin:center;background:#000}
+  body.rotated #tabbar,body.rotated #topbar,body.rotated #vbar{display:none}
+  /* os avisos também precisam girar, senão saem de lado pra quem está com o celular deitado */
+  body.rotated #toasts{top:50%;left:50%;right:auto;bottom:auto;width:var(--app-h);height:100vw;padding-bottom:22px;
+    transform:translate(-50%,-50%) rotate(90deg);justify-content:flex-end;z-index:70}
+  body.rotated #grid.focus .tile:not(.focus){display:none}
+  body.rotated #grid.focus .tile.focus{height:100%}
+  .cb.on.rot{background:var(--cyan);border-color:var(--cyan);color:#07080a}
+
+  /* aviso de navegador embutido (Discord/Instagram e afins) */
+  /* fixo: fora do grid do #shell (auto-placement jogava a faixa pra célula errada) */
+  #inapp{display:none;position:fixed;left:0;right:0;bottom:0;z-index:45;align-items:center;gap:10px;padding:12px 14px;
+    background:#241d0c;border-top:1px solid rgba(255,176,32,.55);font-size:13px;color:var(--text-2);line-height:1.35}
+  @media(max-width:899px){ #inapp{bottom:calc(var(--tabh) + var(--sab))} }
+  body.inapp #inapp{display:flex}
+  body.rotated #inapp{display:none}
+  #inapp .txt{flex:1;min-width:0}
+  #inapp b{color:var(--amber)}
+  #inapp button{flex:none;min-height:40px;padding:0 14px;background:var(--amber);color:#07080a;
+    font-family:var(--disp);font-weight:700;font-size:12px;letter-spacing:.06em;text-transform:uppercase}
+  #inapp .x{background:none;color:var(--text-4);border:1px solid var(--line-strong);padding:0 10px}
+
   #callexit{display:none;position:absolute;left:10px;top:10px;z-index:6;width:42px;height:42px;align-items:center;justify-content:center;
     background:rgba(0,0,0,.6);border:1px solid var(--line-strong);border-radius:50%;color:var(--text-2);font-size:18px}
   #empty{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;color:var(--text-4);text-align:center;padding:24px;pointer-events:none}
@@ -536,6 +560,13 @@
     <button class="exit" id="exitbtn" title="Sair">EXIT</button>
   </div>
 
+  <!-- aviso: aberto dentro do navegador do Discord/Instagram -->
+  <div id="inapp">
+    <div class="txt">Você abriu pelo navegador do <b>Discord</b> — aqui a tela não gira e o login não fica salvo.</div>
+    <button id="inapp-open">Abrir no Safari</button>
+    <button class="x" id="inapp-x">✕</button>
+  </div>
+
   <!-- topbar (mobile) -->
   <header id="topbar">
     <button class="tb-srv hex" id="srvbtn">MI</button>
@@ -615,6 +646,7 @@
           <div id="callbar">
             <button class="cb" id="cb-share" title="Transmitir tela" aria-label="Transmitir tela"><svg viewBox="0 0 24 24"><rect x="2.5" y="4" width="19" height="13" rx="2"/><path d="M8 20.5h8M12 17v3.5"/></svg></button>
             <button class="cb" id="cb-audio" title="Silenciar recebido" aria-label="Silenciar"><svg viewBox="0 0 24 24"><path d="M4 9.5h3.5L12 5.5v13L7.5 14.5H4z"/><path d="M16 9a4 4 0 0 1 0 6M18.5 6.5a7.5 7.5 0 0 1 0 11"/></svg></button>
+            <button class="cb" id="cb-rot" title="Modo paisagem" aria-label="Modo paisagem" hidden><svg viewBox="0 0 24 24"><rect x="3" y="7" width="18" height="12" rx="2"/><path d="M8 4.5 10.5 7 8 9.5"/><path d="M10.5 7H7a3 3 0 0 0-3 3"/></svg></button>
             <button class="cb" id="cb-full" title="Tela cheia" aria-label="Tela cheia" hidden><svg viewBox="0 0 24 24"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg></button>
             <button class="cb" id="cb-pip" title="Miniatura flutuante" aria-label="Picture in picture" hidden><svg viewBox="0 0 24 24"><rect x="2.5" y="4.5" width="19" height="15" rx="2"/><rect x="12" y="11.5" width="8" height="6" rx="1"/></svg></button>
             <button class="cb" id="cb-chat" title="Chat da call" aria-label="Chat"><svg viewBox="0 0 24 24"><path d="M20.5 12.5c0 4-3.8 7-8.5 7-1 0-2-.15-2.9-.42L4 21l1.2-3.4C4.15 16.2 3.5 14.5 3.5 12.5c0-4 3.8-7 8.5-7s8.5 3 8.5 7Z"/></svg></button>
@@ -657,6 +689,8 @@
         <div class="melist">
           <div class="meitem" id="me-servers"><span class="i">▤</span><span class="t">Meus servidores</span><span class="v" id="me-srvcount">0</span></div>
           <div class="meitem" id="me-newserver"><span class="i">+</span><span class="t">Criar servidor</span><span class="v">NOVO</span></div>
+          <div class="meitem" id="me-safari" style="display:none"><span class="i">↗</span><span class="t">Abrir no navegador do celular</span><span class="v">SAFARI</span></div>
+          <div class="meitem" id="me-install" style="display:none"><span class="i">⬚</span><span class="t">Instalar na tela de início</span><span class="v">COMO?</span></div>
           <div class="meitem" id="me-sound"><span class="i">♪</span><span class="t">Sons do sistema</span><span class="v" id="me-soundv">LIGADO</span></div>
           <div class="meitem danger" id="me-exit"><span class="i">⏻</span><span class="t">Sair da conta</span><span class="v">LOGOUT</span></div>
         </div>
@@ -1146,6 +1180,7 @@ async function joinVoice(ch){
 function leaveVoiceLocal(quiet){ sendWS({type:'voice-leave'}); for(const uid of [...peers.keys()]) removePeer(uid); removeTile('me');
   if(screenStream) stopShare();
   curVoiceChan=null; curVoiceName=''; connectedAt=0; $('vbar').classList.add('hidden'); keepAwake(false);
+  if(rotated) toggleRotate(false);
   if(curServer) selectServer(curServer.id);
   if(!quiet){ SND.leave(); setTab(isMobile()?'salas':'chat'); } }
 
@@ -1189,6 +1224,41 @@ function renderMeDiag(ping,loss){ $('me-diag').innerHTML =
   `TELA: ${screenStream?esc(screenSpec):(canShare?'PARADA':'NÃO SUPORTADA NESTE APARELHO')}<br>`+
   `MODO: ${isMobile()?'MOBILE':'DESKTOP'}`; }
 
+/* ---------- navegador embutido (Discord, Instagram, etc.) ----------
+   No iPhone, link tocado dentro do Discord abre num webview do próprio app:
+   fica travado em retrato (não gira), tem armazenamento separado (o login
+   não persiste) e algumas APIs somem. Não dá pra "sair" sozinho — o jeito é
+   oferecer o pulo pro Safari e um modo paisagem próprio. */
+const UA = navigator.userAgent || '';
+const isIOS = /iPhone|iPad|iPod/.test(UA) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+const isStandalone = !!(window.navigator.standalone || matchMedia('(display-mode: standalone)').matches);
+const inAppBrowser = !isStandalone && (
+  /(Discord|FBAN|FBAV|Instagram|Line\/|Twitter|TikTok|Snapchat|LinkedInApp|MicroMessenger)/i.test(UA) ||
+  (isIOS && /AppleWebKit/.test(UA) && !/Safari/.test(UA)) ||
+  (isIOS && !!(window.webkit && window.webkit.messageHandlers) && !/CriOS|FxiOS|EdgiOS/.test(UA))
+);
+function abrirNoNavegador(){
+  const url=location.href.replace(/^https?:\/\//,'');
+  if(isIOS){ location.href='x-safari-https://'+url; setTimeout(()=>copiarLink(true),700); return; }
+  const w=window.open(location.href,'_blank','noopener'); if(!w) copiarLink(true); }
+function copiarLink(silencioso){
+  const url=location.href;
+  const ok=()=>toast(silencioso?'Link copiado — cole no navegador':'Link copiado','#5df2a0');
+  if(navigator.clipboard&&navigator.clipboard.writeText) navigator.clipboard.writeText(url).then(ok).catch(()=>fallback());
+  else fallback();
+  function fallback(){ const i=document.createElement('input'); i.value=url; document.body.appendChild(i);
+    i.select(); i.setSelectionRange(0,99999); try{ document.execCommand('copy'); ok(); }catch(_){ prompt('Copie o link:',url); } i.remove(); } }
+
+/* ---------- modo paisagem forçado ---------- */
+let rotated=false;
+function toggleRotate(force){
+  rotated = force===undefined ? !rotated : !!force;
+  document.body.classList.toggle('rotated',rotated);
+  $('cb-rot').classList.toggle('on',rotated);
+  $('cb-rot').classList.toggle('rot',rotated);
+  fitViewport(); setTimeout(layout,50); nudgeControls();
+  if(rotated) toast('Modo paisagem — toque de novo pra voltar','#35e5ff'); }
+
 /* ---------- controles da call (barra flutuante) ---------- */
 let idleTimer=null;
 function nudgeControls(){ const g=$('gridwrap'); g.classList.remove('idle'); clearTimeout(idleTimer);
@@ -1199,9 +1269,10 @@ function updateCallControls(){
   if(cbs){ cbs.classList.toggle('on',sharing); cbs.hidden=!canShare; cbs.title=sharing?'Parar transmissão':'Transmitir tela'; }
   if(cba){ cba.classList.toggle('off',audioMuted); cba.title=audioMuted?'Ouvir de novo':'Silenciar recebido'; }
   const t=focusedTile();
-  const full=$('cb-full'), pip=$('cb-pip');
+  const full=$('cb-full'), pip=$('cb-pip'), rot=$('cb-rot');
   if(full) full.hidden=!t;
   if(pip) pip.hidden=!(t&&pipSupported(t.video));
+  if(rot) rot.hidden=!(t&&isMobile());
   const b=$('sharebtn'); if(b){ b.classList.toggle('on',sharing); $('sharelab').textContent=sharing?'Parar':'Transmitir'; }
   const ab=$('audiobtn'); if(ab){ ab.classList.toggle('off',audioMuted); $('audiolab').textContent=audioMuted?'Surdo':'Áudio'; }
 }
@@ -1347,6 +1418,10 @@ function enterApp(user,servers){ ME=user; SERVERS=servers||[]; sndInit();
   $('uname').firstChild.textContent=ME.nick; $('utag').textContent=' #'+ME.tag;
   curServer=SERVERS[0]; renderRail(); if(curServer) selectServer(curServer.id);
   if(!canShare){ $('sharebtn').style.display='none'; $('emptyhint').innerHTML='Neste aparelho dá pra <b>assistir e ouvir</b> — quem transmite tela são os PCs.'; }
+  if(inAppBrowser){ let visto=null; try{ visto=localStorage.getItem('mimo_inapp_ok'); }catch(_){}
+    if(!visto) document.body.classList.add('inapp');
+    $('me-safari').style.display='flex'; }
+  if(isIOS&&!isStandalone) $('me-install').style.display='flex';
   setTab(isMobile()?'salas':'chat');
   connectWS(); meterLoop(); statsLoop(); timeLoop(); refreshFriends(); fitViewport();
   openDeepLink(); }
@@ -1387,6 +1462,11 @@ $('sharebtn').onclick=toggleShare; $('audiobtn').onclick=toggleAudioMute; $('lea
 $('cb-share').onclick=(e)=>{ e.stopPropagation(); toggleShare(); };
 $('cb-audio').onclick=(e)=>{ e.stopPropagation(); toggleAudioMute(); };
 $('cb-full').onclick=(e)=>{ e.stopPropagation(); goFullscreen(); };
+$('cb-rot').onclick=(e)=>{ e.stopPropagation(); toggleRotate(); };
+$('inapp-open').onclick=abrirNoNavegador;
+$('inapp-x').onclick=()=>{ document.body.classList.remove('inapp'); try{ localStorage.setItem('mimo_inapp_ok','1'); }catch(_){} };
+$('me-safari').onclick=abrirNoNavegador;
+$('me-install').onclick=()=>toast(isIOS?'Safari → botão compartilhar → "Adicionar à Tela de Início"':'Menu do navegador → "Instalar app"','#35e5ff');
 $('cb-pip').onclick=(e)=>{ e.stopPropagation(); togglePip(); };
 $('cb-chat').onclick=(e)=>{ e.stopPropagation(); const o=$('callchat').classList.toggle('open'); $('callchatbtn').textContent=o?'FECHAR':'CHAT'; };
 $('cb-leave').onclick=(e)=>{ e.stopPropagation(); leaveVoiceLocal(false); };
