@@ -96,6 +96,10 @@ db.exec(`
   );
 `);
 try { db.exec('ALTER TABLE webhook_msgs ADD COLUMN uid INTEGER'); } catch { /* já existe */ }
+// como a pessoa entrou no servidor: owner | invite | public. Sem isso, voltar um
+// servidor pra privado não tinha como saber quem entrou só porque ele era público.
+try { db.exec("ALTER TABLE members ADD COLUMN via TEXT"); } catch { /* já existe */ }
+db.prepare("UPDATE members SET via='public' WHERE via IS NULL AND server IN (SELECT id FROM servers WHERE public=1)").run();
 // migração idempotente: capacidade da sala de voz (salas antigas ficam null → 5)
 try { db.exec('ALTER TABLE channels ADD COLUMN cap INTEGER'); } catch { /* já existe */ }
 // servidor público = todo mundo que loga entra sozinho. Privado = só com convite.
@@ -172,10 +176,10 @@ function userServers(uid) {
   }));
 }
 function joinPublicServers(uid) {
-  for (const s of db.prepare('SELECT id FROM servers WHERE public=1').all()) ensureMember(uid, s.id);
+  for (const s of db.prepare('SELECT id FROM servers WHERE public=1').all()) ensureMember(uid, s.id, 'public');
 }
-function ensureMember(uid, sid) {
-  db.prepare('INSERT OR IGNORE INTO members (server,user) VALUES (?,?)').run(sid, uid);
+function ensureMember(uid, sid, via) {
+  db.prepare('INSERT OR IGNORE INTO members (server,user,via) VALUES (?,?,?)').run(sid, uid, via || 'invite');
 }
 function friendsOf(uid) {
   const rows = db.prepare(`
@@ -260,7 +264,7 @@ async function api(req, res, url) {
       const sid = info.lastInsertRowid;
       db.prepare('INSERT INTO channels (server,name,kind,fmt,pos) VALUES (?,?,?,?,?)').run(sid, 'chat-geral', 'text', null, 0);
       db.prepare('INSERT INTO channels (server,name,kind,fmt,pos) VALUES (?,?,?,?,?)').run(sid, 'Sala Geral', 'voice', 'voz', 1);
-      ensureMember(me.id, sid);
+      ensureMember(me.id, sid, 'owner');
       return sendJSON(res, 200, { servers: userServers(me.id) });
     }
 
@@ -297,7 +301,12 @@ async function api(req, res, url) {
       if (!srv) return sendJSON(res, 404, { error: 'Servidor não encontrado.' });
       if (srv.owner !== me.id) return sendJSON(res, 403, { error: 'Só quem criou o servidor muda isso.' });
       db.prepare('UPDATE servers SET public=? WHERE id=?').run(publico ? 1 : 0, srv.id);
-      if (publico) for (const u of db.prepare('SELECT id FROM users').all()) ensureMember(u.id, srv.id);
+      if (publico) {
+        for (const u of db.prepare('SELECT id FROM users').all()) ensureMember(u.id, srv.id, 'public');
+      } else {
+        // desfaz só quem entrou por ser público — dono e convidados continuam
+        db.prepare("DELETE FROM members WHERE server=? AND via='public' AND user<>?").run(srv.id, srv.owner);
+      }
       return sendJSON(res, 200, { servers: userServers(me.id) });
     }
 
@@ -305,7 +314,7 @@ async function api(req, res, url) {
       const { invite } = await readBody(req);
       const s = db.prepare('SELECT id FROM servers WHERE invite=?').get(String(invite || '').trim());
       if (!s) return sendJSON(res, 404, { error: 'Convite inválido ou expirado.' });
-      ensureMember(me.id, s.id);
+      ensureMember(me.id, s.id, 'invite');
       return sendJSON(res, 200, { server: s.id, servers: userServers(me.id) });
     }
 
