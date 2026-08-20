@@ -429,6 +429,26 @@
   .chip .av{width:26px;height:26px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-family:var(--disp);font-weight:700;font-size:11px;color:#07080a}
   .mnote{font-size:13px;color:var(--text-4);margin-bottom:18px}
   .mbtn{width:100%;min-height:56px;padding:16px;background:var(--lime);color:#07080a;font-family:var(--disp);font-weight:700;letter-spacing:.12em;text-transform:uppercase;font-size:14px}
+  /* painel de transmissão */
+  .shgrid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:20px}
+  .shopt{padding:14px 10px;border:1px solid var(--line-strong);cursor:pointer;text-align:center;min-height:96px;
+    display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px}
+  .shopt.on{background:rgba(206,255,54,.08);border-color:var(--lime)}
+  .shopt svg{width:30px;height:30px;fill:none;stroke:var(--text-3);stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}
+  .shopt.on svg{stroke:var(--lime)}
+  .shopt .t{font-family:var(--disp);font-weight:600;font-size:13px}
+  .shopt .d{font-family:var(--mono);font-size:8px;letter-spacing:.12em;color:var(--text-4)}
+  .shrow{display:flex;gap:10px;margin-bottom:20px}
+  .shq{flex:1;padding:12px 10px;border:1px solid var(--line-strong);cursor:pointer;text-align:center}
+  .shq.on{background:rgba(53,229,255,.08);border-color:var(--cyan)}
+  .shq .t{font-family:var(--disp);font-weight:700;font-size:14px}
+  .shq .d{font-family:var(--mono);font-size:8px;letter-spacing:.1em;color:var(--text-4);margin-top:3px}
+  .shaudio{display:flex;align-items:center;gap:12px;padding:14px;border:1px solid var(--line-strong);margin-bottom:16px;cursor:pointer}
+  .shaudio .t{flex:1;font-family:var(--disp);font-weight:600;font-size:14px}
+  .shaudio .t small{display:block;font-family:var(--body);font-weight:400;font-size:12px;color:var(--text-4);margin-top:2px}
+  .shnote{display:flex;gap:10px;padding:12px;background:rgba(53,229,255,.06);border-left:2px solid var(--cyan);
+    font-size:12.5px;color:var(--text-3);line-height:1.5;margin-bottom:18px}
+
   .srvpick{display:flex;flex-direction:column;gap:10px;margin-bottom:18px}
   .srvpick .row{display:flex;align-items:center;gap:12px;padding:12px;border:1px solid var(--line);min-height:60px;cursor:pointer}
   .srvpick .row.on{border-color:var(--lime);background:rgba(206,255,54,.06)}
@@ -852,11 +872,60 @@ function toggleAudioMute(){ audioMuted=!audioMuted; applyBroadcastVol();
   updateCallControls(); audioMuted?SND.off():SND.on(); }
 
 /* ---------- tela ---------- */
-let screenStream=null, screenSpec='—';
-async function toggleShare(){ if(screenStream){ stopShare(); return; }
+const PERFIS = {
+  alta:  {w:2560,h:1440,fps:60,bps:10_000_000,t:'1440p60',d:'MÁXIMA'},
+  media: {w:1920,h:1080,fps:60,bps: 6_000_000,t:'1080p60',d:'EQUILÍBRIO'},
+  leve:  {w:1280,h: 720,fps:30,bps: 2_500_000,t:'720p30', d:'CONEXÃO FRACA'},
+};
+const SUPERFICIES = {
+  monitor: {t:'Tela inteira', d:'TUDO', svg:'<rect x="2.5" y="4" width="19" height="13" rx="2"/><path d="M8 20.5h8M12 17v3.5"/>'},
+  window:  {t:'Uma janela',  d:'SÓ UM APP', svg:'<rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 9h18"/><circle cx="6" cy="7" r=".6"/>'},
+  browser: {t:'Uma aba',     d:'DO NAVEGADOR', svg:'<path d="M3 8.5 6 5h12l3 3.5v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1z"/><path d="M3 8.5h18"/>'},
+};
+let screenStream=null, screenSpec='—', sharePerfil=PERFIS.alta;
+
+/* A janela "escolha o que compartilhar" é do navegador e nenhuma página pode
+   trocar (é o que impede um site de forjar o pedido). O que dá é preparar tudo
+   aqui e mandar as dicas — displaySurface deixa a nativa já na aba certa. */
+function modalShare(){
   if(!canShare){ toast('Este navegador não compartilha tela — no iPhone dá pra assistir','#ffb020'); return; }
   if(!curVoiceChan){ toast('Entre numa sala primeiro','#ffb020'); return; }
-  let stream; try{ stream=await navigator.mediaDevices.getDisplayMedia({ video:{frameRate:{ideal:60,max:60},width:{ideal:2560},height:{ideal:1440}}, audio:{channelCount:2,sampleRate:48000,echoCancellation:false,noiseSuppression:false,autoGainControl:false} }); }catch(e){ return; }
+  let surf='monitor', qual='alta', comAudio=true;
+  const opts=Object.entries(SUPERFICIES).map(([k,v])=>`<div class="shopt${k===surf?' on':''}" data-k="${k}">
+      <svg viewBox="0 0 24 24">${v.svg}</svg><div class="t">${v.t}</div><div class="d">${v.d}</div></div>`).join('');
+  const quals=Object.entries(PERFIS).map(([k,v])=>`<div class="shq${k===qual?' on':''}" data-k="${k}">
+      <div class="t">${v.t}</div><div class="d">${v.d}</div></div>`).join('');
+  openModal(`<div class="m-hd"><div><div class="m-k">// TRANSMITIR</div><div class="m-t">Compartilhar tela</div></div>
+      <button class="m-x" onclick="closeModal()">✕</button></div>
+    <div class="mlabel">O que transmitir</div><div class="shgrid" id="sh-surf">${opts}</div>
+    <div class="mlabel">Qualidade</div><div class="shrow" id="sh-qual">${quals}</div>
+    <div class="shaudio${comAudio?' on':''}" id="sh-audio">
+      <div class="toggle on" id="sh-audio-t"><div class="track"><i></i></div></div>
+      <div class="t">Levar o áudio junto<small>Som do jogo, do vídeo, do que estiver tocando</small></div>
+    </div>
+    <div class="shnote">A próxima janela é do seu navegador e não dá pra trocar — é ela que protege você de sites pedindo sua tela escondido. Escolha ali o que já marcou aqui.</div>
+    <button class="mbtn cut-btn" id="sh-go">Escolher e transmitir →</button>`);
+  const g=$('sh-surf'); g.querySelectorAll('.shopt').forEach(o=>o.onclick=()=>{ surf=o.dataset.k;
+    g.querySelectorAll('.shopt').forEach(x=>x.classList.remove('on')); o.classList.add('on'); });
+  const q=$('sh-qual'); q.querySelectorAll('.shq').forEach(o=>o.onclick=()=>{ qual=o.dataset.k;
+    q.querySelectorAll('.shq').forEach(x=>x.classList.remove('on')); o.classList.add('on'); });
+  $('sh-audio').onclick=()=>{ comAudio=!comAudio; $('sh-audio-t').classList.toggle('on',comAudio); $('sh-audio').classList.toggle('on',comAudio); };
+  $('sh-go').onclick=()=>{ closeModal(); startShare({surf,qual,comAudio}); };
+}
+async function toggleShare(){ if(screenStream){ stopShare(); return; } modalShare(); }
+async function startShare({surf,qual,comAudio}){
+  sharePerfil = PERFIS[qual] || PERFIS.alta;
+  const p = sharePerfil;
+  const audio = comAudio ? {channelCount:2,sampleRate:48000,echoCancellation:false,noiseSuppression:false,autoGainControl:false} : false;
+  let stream;
+  try{ stream=await navigator.mediaDevices.getDisplayMedia({
+      video:{ frameRate:{ideal:p.fps,max:p.fps}, width:{ideal:p.w}, height:{ideal:p.h}, displaySurface:surf },
+      audio,
+      systemAudio: comAudio?'include':'exclude',
+      selfBrowserSurface:'exclude',      // não deixa transmitir a própria aba do MIMO (efeito espelho)
+      surfaceSwitching:'include',        // deixa trocar de janela sem parar a transmissão
+    }); }
+  catch(e){ if(e&&e.name!=='NotAllowedError') toast('Não deu pra abrir a tela: '+e.name,'#ff2d7a'); return; }
   screenStream=stream; const vt=stream.getVideoTracks()[0]; vt.contentHint='detail'; vt.onended=stopShare;
   const s=vt.getSettings(); screenSpec=`${s.width||'?'}×${s.height||'?'} · ${Math.round(s.frameRate||0)}fps`;
   attachLocalScreen(stream); for(const st of peers.values()) addScreenTo(st);
@@ -873,9 +942,10 @@ function tuneSenderFor(st){ const sender=st.vsender||(st.pc.getSenders&&st.pc.ge
   const p=sender.getParameters(); if(!p.encodings||!p.encodings.length) p.encodings=[{}];
   const mob=!!st.mobile;
   const track=sender.track, h=(track&&track.getSettings&&track.getSettings().height)||1440;
-  p.encodings[0].maxBitrate = mob ? 4_000_000 : 10_000_000;
+  const perfil = sharePerfil || PERFIS.alta;
+  p.encodings[0].maxBitrate = mob ? Math.min(4_000_000, perfil.bps) : perfil.bps;
   p.encodings[0].scaleResolutionDownBy = mob ? Math.max(1, +(h/1080).toFixed(2)) : 1;
-  p.encodings[0].maxFramerate = mob ? 30 : 60;
+  p.encodings[0].maxFramerate = mob ? Math.min(30, perfil.fps) : perfil.fps;
   p.encodings[0].networkPriority='high';
   p.degradationPreference = mob ? 'balanced' : 'maintain-resolution';
   sender.setParameters(p).catch(()=>{}); }

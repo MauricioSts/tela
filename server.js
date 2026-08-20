@@ -95,6 +95,7 @@ db.exec(`
     del_at INTEGER NOT NULL
   );
 `);
+try { db.exec('ALTER TABLE webhook_msgs ADD COLUMN uid INTEGER'); } catch { /* já existe */ }
 // migração idempotente: capacidade da sala de voz (salas antigas ficam null → 5)
 try { db.exec('ALTER TABLE channels ADD COLUMN cap INTEGER'); } catch { /* já existe */ }
 // servidor público = todo mundo que loga entra sozinho. Privado = só com convite.
@@ -379,6 +380,7 @@ function pushVoice(uid, obj) { send(voiceSock.get(uid), obj); }  // só a sessã
 function roomOf(uid) { for (const [cid, set] of voiceRooms) if (set.has(uid)) return cid; return null; }
 function leaveVoice(uid) {
   voiceSock.delete(uid);
+  if (transmitindo.delete(uid)) notifyShareEnded(uid);
   const cid = roomOf(uid); if (cid == null) return;
   voiceRooms.get(cid).delete(uid);
   for (const pid of voiceRooms.get(cid)) pushVoice(pid, { type: 'voice-left', room: cid, id: uid });
@@ -413,14 +415,24 @@ function hooksForServer(sid, nome) {
 const SITE_URL = process.env.TELA_SITE_URL || 'https://tela.mauriciosts.com';
 const DISCORD_TTL_MIN = Number(process.env.TELA_DISCORD_TTL_MIN || 60);   // 0 = não apaga
 const lastShareNotify = new Map();
+const transmitindo = new Set();     // uid -> está com a tela aberta
 
 /* O aviso é um convite pra uma transmissão ao vivo: depois de TTL ele vira lixo
    com link morto, então some sozinho. A fila fica no banco pra um restart no
    meio do caminho não deixar mensagem órfã. */
-function scheduleWebhookDelete(hook, msgId) {
-  if (!(DISCORD_TTL_MIN > 0) || !msgId) return;
-  db.prepare('INSERT INTO webhook_msgs (hook,msg,del_at) VALUES (?,?,?)')
-    .run(hook, String(msgId), now() + Math.round(DISCORD_TTL_MIN * 60000));
+function scheduleWebhookDelete(hook, msgId, uid) {
+  if (!msgId) return;
+  // TTL 0 = só apaga quando a transmissão acabar (del_at bem no futuro)
+  const del = DISCORD_TTL_MIN > 0 ? now() + Math.round(DISCORD_TTL_MIN * 60000) : now() + 86400000;
+  db.prepare('INSERT INTO webhook_msgs (hook,msg,del_at,uid) VALUES (?,?,?,?)').run(hook, String(msgId), del, uid || null);
+}
+/* transmissão acabou: o convite morreu junto, então o aviso some na hora
+   (o TTL continua valendo como rede de segurança pra quem cair da rede) */
+function notifyShareEnded(uid) {
+  const linhas = db.prepare('SELECT * FROM webhook_msgs WHERE uid=?').all(uid);
+  if (!linhas.length) return;
+  db.prepare('UPDATE webhook_msgs SET del_at=1 WHERE uid=?').run(uid);
+  sweepWebhookMsgs().catch(() => {});
 }
 async function sweepWebhookMsgs() {
   const vencidas = db.prepare('SELECT * FROM webhook_msgs WHERE del_at<=?').all(now());
@@ -472,7 +484,7 @@ function notifyShareStarted(uid, user, cid) {
     }).then(async (r) => {
       if (!r.ok) { console.warn(`discord[${alvo}]: webhook respondeu ${r.status}`); return; }
       const msg = await r.json().catch(() => null);
-      scheduleWebhookDelete(hook, msg && msg.id);
+      scheduleWebhookDelete(hook, msg && msg.id, uid);
       console.log(`discord[${alvo}]: avisou que ${user.nick} está transmitindo`
         + (DISCORD_TTL_MIN > 0 ? ` (some em ${DISCORD_TTL_MIN}min)` : ''));
     }).catch((e) => console.warn(`discord[${alvo}]: falhou —`, e.message));   // nunca derruba a call
@@ -555,7 +567,8 @@ wss.on('connection', (sock, req) => {
     if (m.type === 'sharing') {
       const cid = roomOf(uid);
       if (cid == null || voiceSock.get(uid) !== sock) return;   // só quem está mesmo na call
-      if (m.on) notifyShareStarted(uid, user, cid);
+      if (m.on) { transmitindo.add(uid); notifyShareStarted(uid, user, cid); }
+      else if (transmitindo.delete(uid)) notifyShareEnded(uid);
       return;
     }
 
