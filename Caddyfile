@@ -1,20 +1,8 @@
-# TLS automático via Let's Encrypt. Serve o estático direto (menor latência)
-# e faz proxy só do WebSocket de sinalização pro Node.
+# TLS automatico via Let's Encrypt.
+# O app MIMO (server.js) serve TUDO: HTML dinamico (injeta token por request),
+# API REST /api/* e a sinalizacao WebSocket /ws. Por isso e reverse_proxy do host inteiro.
 
 tela.mauriciosts.com {
 	encode zstd gzip
-
-	# Sinalização WebSocket -> server.js
-	reverse_proxy /ws localhost:8080
-
-	# Link "pelado" (tela.mauriciosts.com) vai pra página da espectadora.
-	redir / /room.html
-
-	# HTML sempre fresco (evita Safari servir versão velha).
-	@html path *.html
-	header @html Cache-Control "no-store"
-
-	# Páginas host.html / view.html
-	root * /home/ubuntu/tela/public
-	file_server
+	reverse_proxy localhost:8080
 }
