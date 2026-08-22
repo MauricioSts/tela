@@ -921,16 +921,19 @@ function modalShare(){
     </div>
     <div class="shsrc${comAudio?' on':''}" id="sh-src">
       <select id="sh-adev"><option value="">Do compartilhamento — mix do PC (padrão)</option></select>
-      <div class="hint">O mix do PC leva <b>tudo</b>, Discord incluso. Pra transmitir tudo <b>menos</b> o Discord,
-        mande o Discord pra outra saída e escolha aqui o dispositivo que recebe o resto.
-        <span class="lk" id="sh-how">Como fazer no Windows →</span></div>
+      <div class="hint">O mix do PC leva <b>tudo</b>, Discord incluso. <b>Só o som da janela</b> é o jeito do Discord —
+        pega o áudio só do programa que você escolher (precisa de Chrome/Edge 141+ e marcar a caixa de áudio na janela do navegador).
+        <span class="lk" id="sh-how">Não funcionou? Tem plano B →</span></div>
       <div class="hint" id="sh-perm" style="display:none">Os nomes só aparecem depois de
         <span class="lk" id="sh-permgo">liberar o acesso ao áudio</span>.</div>
     </div>
     <div class="shnote">A próxima janela é do seu navegador e não dá pra trocar — é ela que protege você de sites pedindo sua tela escondido. Escolha ali o que já marcou aqui.</div>
     <button class="mbtn cut-btn" id="sh-go">Escolher e transmitir →</button>`);
-  const g=$('sh-surf'); g.querySelectorAll('.shopt').forEach(o=>o.onclick=()=>{ surf=o.dataset.k;
-    g.querySelectorAll('.shopt').forEach(x=>x.classList.remove('on')); o.classList.add('on'); });
+  const marcaSurf=(k)=>{ surf=k; g.querySelectorAll('.shopt').forEach(x=>x.classList.toggle('on',x.dataset.k===k)); };
+  const g=$('sh-surf'); g.querySelectorAll('.shopt').forEach(o=>o.onclick=()=>{ marcaSurf(o.dataset.k);
+    /* som da janela só existe compartilhando uma janela */
+    if(surf!=='window' && $('sh-adev').value==='__janela__'){ $('sh-adev').value=''; audioDev='';
+      toast('Som só da janela vale pra "Uma janela" — voltei pro mix do PC','#ffb020'); } });
   const q=$('sh-qual'); q.querySelectorAll('.shq').forEach(o=>o.onclick=()=>{ qual=o.dataset.k;
     q.querySelectorAll('.shq').forEach(x=>x.classList.remove('on')); o.classList.add('on'); });
   $('sh-audio').onclick=()=>{ comAudio=!comAudio; $('sh-audio-t').classList.toggle('on',comAudio);
@@ -943,11 +946,14 @@ function modalShare(){
     let ds=[]; try{ ds=(await navigator.mediaDevices.enumerateDevices()).filter(d=>d.kind==='audioinput'); }catch(_){}
     ds=ds.filter(d=>d.deviceId && d.deviceId!=='default' && d.deviceId!=='communications');
     sel.innerHTML='<option value="">Do compartilhamento — mix do PC (padrão)</option>'+
+      '<option value="__janela__">Só o som da janela compartilhada — isola o Discord</option>'+
       ds.map(d=>`<option value="${esc(d.deviceId)}">${esc(d.label||'Entrada sem nome')}</option>`).join('');
     sel.value=audioDev||''; if(sel.value!==(audioDev||'')) audioDev='';   // o dispositivo salvo sumiu
     $('sh-perm').style.display = (ds.length && !ds.some(d=>d.label)) ? '' : 'none';
   }
-  sel.onchange=()=>{ audioDev=sel.value; try{ localStorage.setItem('mimo_audiosrc',audioDev); }catch(_){} };
+  sel.onchange=()=>{ audioDev=sel.value; try{ localStorage.setItem('mimo_audiosrc',audioDev); }catch(_){}
+    if(audioDev==='__janela__') marcaSurf('window'); };
+  if(audioDev==='__janela__') marcaSurf('window');
   $('sh-permgo').onclick=async()=>{ try{ const st=await navigator.mediaDevices.getUserMedia({audio:true});
       st.getTracks().forEach(t=>t.stop()); }catch(_){} fillDevs(); };
   $('sh-how').onclick=()=>modalAudioWin();
@@ -960,9 +966,10 @@ function modalShare(){
 function modalAudioWin(){
   openModal(`<div class="m-hd"><div><div class="m-k">// ÁUDIO</div><div class="m-t">Transmitir tudo menos o Discord</div></div>
       <button class="m-x" onclick="closeModal()">✕</button></div>
-    <div class="shnote"><div>O navegador não consegue tirar um programa do som capturado — ele pega a saída inteira do PC.
-      O jeito é mandar o Discord pra <b>outra saída</b> e transmitir a que sobrou.</div></div>
-    <div class="mlabel">Receita com VB-Cable (grátis)</div>
+    <div class="shnote"><div>O Discord isola porque é programa nativo: ele grava o áudio <b>do processo</b>. O Chrome 141+ ganhou
+      o equivalente — por isso a opção <b>"Só o som da janela compartilhada"</b>, que pega o som só do programa escolhido.
+      Escolha "Uma janela" e marque a caixa de áudio na janela do navegador. Se ela não aparecer, cai no plano B.</div></div>
+    <div class="mlabel">Plano B: VB-Cable (grátis)</div>
     <div class="guia"><ol>
       <li>Instale o <b>VB-CABLE</b> (vb-audio.com/Cable) e reinicie o PC.</li>
       <li>Configurações → Sistema → Som: saída padrão = <b>CABLE Input</b>.</li>
@@ -971,7 +978,8 @@ function modalAudioWin(){
         marque "Ouvir este dispositivo" e reproduza pelo seu fone — é assim que você continua ouvindo o jogo.</li>
       <li>Aqui no painel de transmitir, fonte de áudio = <b>CABLE Output</b>.</li>
     </ol></div>
-    <div class="shnote" style="margin-top:16px"><div>Resultado: jogo, vídeo e música passam pelo cabo e entram na live; o Discord vai
+    <div class="shnote" style="margin-top:16px"><div>Diferença: o som da janela leva <b>só</b> o programa escolhido; o cabo leva <b>tudo menos</b> o Discord
+      (jogo + música + navegador). Com o cabo: jogo, vídeo e música passam por ele e entram na live; o Discord vai
       direto pro fone e nunca é capturado. O "Ouvir este dispositivo" custa uns 20–40 ms de atraso no som <b>pra você</b>;
       se incomodar, o <b>VoiceMeeter Banana</b> faz o mesmo com menos atraso (saída padrão = VoiceMeeter Input,
       Discord = VoiceMeeter AUX Input, A1 = seu fone nos dois, e aqui escolha <b>VoiceMeeter Out B1</b> deixando só o VAIO mandar pro B1).</div></div>
@@ -982,13 +990,15 @@ async function startShare({surf,qual,comAudio,audioDev}){
   sharePerfil = PERFIS[qual] || PERFIS.alta;
   const p = sharePerfil;
   const AUD = {channelCount:2,sampleRate:48000,echoCancellation:false,noiseSuppression:false,autoGainControl:false};
-  const porDisp = !!(comAudio && audioDev);   // áudio de uma entrada, não do mix da tela
+  const porJanela = !!(comAudio && audioDev==='__janela__');            // só o som do programa
+  const porDisp = !!(comAudio && audioDev && !porJanela);               // de uma entrada de áudio
   const audio = (comAudio && !porDisp) ? AUD : false;
   let stream;
   try{ stream=await navigator.mediaDevices.getDisplayMedia({
       video:{ frameRate:{ideal:p.fps,max:p.fps}, width:{ideal:p.w}, height:{ideal:p.h}, displaySurface:surf },
       audio,
-      systemAudio: (comAudio && !porDisp)?'include':'exclude',
+      systemAudio: (comAudio && !porDisp && !porJanela)?'include':'exclude',
+      windowAudio: porJanela?'window':'system',   // 'window' = só o áudio da janela (Chrome 141+)
       selfBrowserSurface:'exclude',      // não deixa transmitir a própria aba do MIMO (efeito espelho)
       surfaceSwitching:'include',        // deixa trocar de janela sem parar a transmissão
     }); }
@@ -997,7 +1007,10 @@ async function startShare({surf,qual,comAudio,audioDev}){
   const s=vt.getSettings(); screenSpec=`${s.width||'?'}×${s.height||'?'} · ${Math.round(s.frameRate||0)}fps`;
   /* a entrada escolhida entra no MESMO MediaStream da tela: o outro lado recebe
      um stream só (vídeo+áudio) e o stopShare já para tudo junto */
-  shareAudioSrc = comAudio ? (porDisp?'…':'MIX DO PC') : 'SEM ÁUDIO';
+  shareAudioSrc = comAudio ? (porDisp?'…':(porJanela?'SÓ DA JANELA':'MIX DO PC')) : 'SEM ÁUDIO';
+  if(porJanela && !stream.getAudioTracks().length){
+    shareAudioSrc='SEM ÁUDIO';
+    toast('A janela veio sem áudio — marque a caixa de som na janela do navegador, ou use o plano B do guia','#ffb020'); }
   if(porDisp){
     try{ const a=await navigator.mediaDevices.getUserMedia({audio:Object.assign({deviceId:{exact:audioDev}},AUD)});
       const at=a.getAudioTracks()[0];
