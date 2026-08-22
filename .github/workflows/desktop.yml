@@ -41,9 +41,14 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - name: Conferir se o addon nativo compilou
         shell: bash
+        # o node_modules/mimo-loopback é uma junção do Windows apontando pra
+        # native/; o find não atravessa junção, então procura nos dois lugares
         run: |
-          f=$(find node_modules/mimo-loopback -name '*.node' 2>/dev/null | head -1)
-          if [ -z "$f" ]; then echo "::error::o addon mimo_loopback.node não foi gerado"; exit 1; fi
+          f=$(find -L native/build node_modules -name 'mimo_loopback.node' 2>/dev/null | head -1)
+          if [ -z "$f" ]; then
+            echo "::error::mimo_loopback.node não foi gerado. Achados: $(find -L . -name '*.node' -not -path './dist/*' 2>/dev/null | head -5 | tr '\n' ' ')"
+            exit 1
+          fi
           echo "addon: $f ($(stat -c%s "$f") bytes)"
       - uses: actions/upload-artifact@v4
         with:
