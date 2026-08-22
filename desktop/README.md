@@ -36,11 +36,12 @@ Não dá pra compilar Windows nesta VM Linux — quem compila é o GitHub Action
 # 1. subir o código
 git push origin main
 
-# 2. marcar a versão (tem que bater com a "version" do package.json)
-git tag desktop-v0.1.0 && git push origin desktop-v0.1.0
+# 2. marcar a versão — a tag TEM que ser v<version> do package.json, porque é
+#    essa que o electron-builder usa pra achar/criar o release
+git tag v0.1.1 && git push origin v0.1.1
 ```
 
-A Action compila e publica `MIMO-0.1.0-Setup.exe` em **Releases**. Sem tag, dá
+A Action compila e publica `MIMO-0.1.1-Setup.exe` em **Releases**. Sem tag, dá
 pra rodar pelo botão *Run workflow* — aí o `.exe` fica só como artifact da
 execução, sem virar release.
 

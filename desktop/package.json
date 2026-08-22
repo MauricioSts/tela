@@ -1,7 +1,7 @@
 {
   "name": "mimo-desktop",
   "productName": "MIMO",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "MIMO no desktop — transmissão de tela com áudio isolado por programa",
   "main": "main.js",
   "author": "MauricioSts",

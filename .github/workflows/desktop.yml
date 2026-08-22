@@ -1,11 +1,12 @@
 # Compila o app de desktop no Windows e publica o instalador no Releases.
-# Roda sozinho quando você empurra uma tag desktop-v* (ex.: desktop-v0.1.0);
-# no botão "Run workflow" ele só compila e deixa o .exe como artifact.
+# Roda sozinho quando você empurra uma tag v* (ex.: v0.1.1) — tem que ser a MESMA
+# tag que o electron-builder usa pra publicar, que é sempre v<version> do
+# package.json. No botão "Run workflow" ele só compila e deixa o .exe como artifact.
 name: MIMO desktop (Windows)
 
 on:
   push:
-    tags: ['desktop-v*']
+    tags: ['v*']
   workflow_dispatch:
 
 permissions:
