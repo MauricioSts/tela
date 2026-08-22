@@ -96,15 +96,17 @@ db.exec(`
   );
 `);
 try { db.exec('ALTER TABLE webhook_msgs ADD COLUMN uid INTEGER'); } catch { /* já existe */ }
+try { db.exec('ALTER TABLE webhook_msgs ADD COLUMN cid INTEGER'); } catch { /* já existe */ }
 // como a pessoa entrou no servidor: owner | invite | public. Sem isso, voltar um
 // servidor pra privado não tinha como saber quem entrou só porque ele era público.
 try { db.exec("ALTER TABLE members ADD COLUMN via TEXT"); } catch { /* já existe */ }
-db.prepare("UPDATE members SET via='public' WHERE via IS NULL AND server IN (SELECT id FROM servers WHERE public=1)").run();
 // migração idempotente: capacidade da sala de voz (salas antigas ficam null → 5)
 try { db.exec('ALTER TABLE channels ADD COLUMN cap INTEGER'); } catch { /* já existe */ }
 // servidor público = todo mundo que loga entra sozinho. Privado = só com convite.
 try { db.exec('ALTER TABLE servers ADD COLUMN public INTEGER NOT NULL DEFAULT 0'); } catch { /* já existe */ }
 db.prepare("UPDATE servers SET public=1 WHERE invite='MIMO'").run();
+// depende da coluna servers.public acima — em base nova ela ainda não existia aqui
+db.prepare("UPDATE members SET via='public' WHERE via IS NULL AND server IN (SELECT id FROM servers WHERE public=1)").run();
 
 const COLORS = ['#ceff36', '#ff2d7a', '#35e5ff', '#ffb020', '#a97bff', '#5df2a0'];
 const FORMATS = ['voz', 'video', 'palco', 'assistir', 'torneio', 'estudo'];
@@ -115,8 +117,8 @@ const now = () => Date.now();
 function seed() {
   const s = db.prepare('SELECT id FROM servers WHERE invite = ?').get('MIMO');
   if (s) return s.id;
-  const info = db.prepare('INSERT INTO servers (name,color,invite,owner,created) VALUES (?,?,?,?,?)')
-    .run('MIMO', '#ceff36', 'MIMO', 0, now());
+  const info = db.prepare('INSERT INTO servers (name,color,invite,owner,created,public) VALUES (?,?,?,?,?,1)')
+    .run('MIMO', '#ceff36', 'MIMO', 0, now());   // público: é nele que todo mundo cai ao criar conta
   const sid = info.lastInsertRowid;
   db.prepare('INSERT INTO channels (server,name,kind,fmt,pos) VALUES (?,?,?,?,?)').run(sid, 'chat-geral', 'text', null, 0);
   db.prepare('INSERT INTO channels (server,name,kind,fmt,pos) VALUES (?,?,?,?,?)').run(sid, 'Sala Geral', 'voice', 'voz', 1);
@@ -429,17 +431,19 @@ const transmitindo = new Set();     // uid -> está com a tela aberta
 /* O aviso é um convite pra uma transmissão ao vivo: depois de TTL ele vira lixo
    com link morto, então some sozinho. A fila fica no banco pra um restart no
    meio do caminho não deixar mensagem órfã. */
-function scheduleWebhookDelete(hook, msgId, uid) {
+function scheduleWebhookDelete(hook, msgId, uid, cid) {
   if (!msgId) return;
   // TTL 0 = só apaga quando a transmissão acabar (del_at bem no futuro)
   const del = DISCORD_TTL_MIN > 0 ? now() + Math.round(DISCORD_TTL_MIN * 60000) : now() + 86400000;
-  db.prepare('INSERT INTO webhook_msgs (hook,msg,del_at,uid) VALUES (?,?,?,?)').run(hook, String(msgId), del, uid || null);
+  db.prepare('INSERT INTO webhook_msgs (hook,msg,del_at,uid,cid) VALUES (?,?,?,?,?)')
+    .run(hook, String(msgId), del, uid || null, cid || null);
 }
 /* transmissão acabou: o convite morreu junto, então o aviso some na hora
    (o TTL continua valendo como rede de segurança pra quem cair da rede) */
 const GRACA_MS = 25000;   // trocar de janela = parar e começar de novo; o aviso espera
 function notifyShareEnded(uid) {
-  lastShareNotify.delete(uid);                       // pode avisar de novo assim que voltar
+  // pode avisar de novo assim que voltar (a trava é por canal do Discord)
+  for (const k of [...lastShareNotify.keys()]) if (k.startsWith(`${uid}|`)) lastShareNotify.delete(k);
   const n = db.prepare('UPDATE webhook_msgs SET del_at=? WHERE uid=? AND del_at>?')
     .run(now() + GRACA_MS, uid, now() + GRACA_MS).changes;
   if (n) console.log(`discord: transmissão de uid ${uid} acabou — aviso some em ${GRACA_MS / 1000}s`);
@@ -466,17 +470,6 @@ function notifyShareStarted(uid, user, cid) {
   if (!hooks.length) return;                       // esse servidor não avisa em lugar nenhum
   const t = Date.now();
   const ttl = DISCORD_TTL_MIN > 0 ? Math.round(DISCORD_TTL_MIN * 60000) : 86400000;
-  // aviso ainda vivo dessa pessoa: só renova o prazo (evita apagar e repostar
-  // toda vez que ela troca a janela compartilhada)
-  const vivos = db.prepare('SELECT count(*) c FROM webhook_msgs WHERE uid=?').get(uid).c;
-  if (vivos) {
-    db.prepare('UPDATE webhook_msgs SET del_at=? WHERE uid=?').run(t + ttl, uid);
-    lastShareNotify.set(uid, t);
-    console.log(`discord: ${user.nick} voltou a transmitir — aviso mantido`);
-    return;
-  }
-  if (t - (lastShareNotify.get(uid) || 0) < 15000) return;    // trava só o flood de cliques
-  lastShareNotify.set(uid, t);
   const gente = (voiceRooms.get(cid)?.size) || 1;
   // o convite vai junto: quem ainda não é do servidor entra pelo próprio link
   const inv = srv && db.prepare('SELECT invite FROM servers WHERE id=?').get(ch.server)?.invite;
@@ -497,6 +490,20 @@ function notifyShareStarted(uid, user, cid) {
   for (const hook of hooks) {
     const url = hook + (hook.includes('?') ? '&' : '?') + 'wait=true';
     const alvo = hook.split('/').slice(-2, -1)[0];   // id do webhook, só pro log
+    // aviso ainda vivo dessa pessoa NESTE canal do Discord e NESTA sala: só renova
+    // o prazo, pra trocar a janela compartilhada não apagar e repostar. Aviso de
+    // OUTRA sala não vale por este: quem trocava de sala renovava a mensagem antiga
+    // e o canal da sala nova nunca recebia nada.
+    const vivo = db.prepare('SELECT id FROM webhook_msgs WHERE uid=? AND hook=? AND cid IS ? AND del_at>? LIMIT 1')
+      .get(uid, hook, cid, t);
+    if (vivo) {
+      db.prepare('UPDATE webhook_msgs SET del_at=? WHERE id=?').run(t + ttl, vivo.id);
+      lastShareNotify.set(`${uid}|${hook}`, t);
+      console.log(`discord[${alvo}]: ${user.nick} voltou a transmitir — aviso mantido`);
+      continue;
+    }
+    if (t - (lastShareNotify.get(`${uid}|${hook}`) || 0) < 15000) continue;   // trava só o flood de cliques
+    lastShareNotify.set(`${uid}|${hook}`, t);
     fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -505,7 +512,7 @@ function notifyShareStarted(uid, user, cid) {
     }).then(async (r) => {
       if (!r.ok) { console.warn(`discord[${alvo}]: webhook respondeu ${r.status}`); return; }
       const msg = await r.json().catch(() => null);
-      scheduleWebhookDelete(hook, msg && msg.id, uid);
+      scheduleWebhookDelete(hook, msg && msg.id, uid, cid);
       console.log(`discord[${alvo}]: avisou que ${user.nick} está transmitindo`
         + (DISCORD_TTL_MIN > 0 ? ` (some em ${DISCORD_TTL_MIN}min)` : ''));
     }).catch((e) => console.warn(`discord[${alvo}]: falhou —`, e.message));   // nunca derruba a call
