@@ -27,7 +27,15 @@ jobs:
           cache-dependency-path: desktop/package-lock.json
       - run: npm ci
       - name: Empacotar (e publicar, se for tag)
-        run: npx electron-builder --win --publish ${{ startsWith(github.ref, 'refs/tags/') && 'always' || 'never' }}
+        shell: bash
+        # o log da execução só é legível por quem tem admin do repo; o ::error::
+        # vira annotation, que a API pública mostra — é assim que se enxerga a falha
+        run: |
+          set -o pipefail
+          npx electron-builder --win --publish ${{ startsWith(github.ref, 'refs/tags/') && 'always' || 'never' }} 2>&1 | tee build.log || {
+            echo "::error::electron-builder falhou: $(tail -c 1200 build.log | tr '\n\r' '  ')"
+            exit 1
+          }
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - uses: actions/upload-artifact@v4
