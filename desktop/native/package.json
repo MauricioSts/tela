@@ -1,0 +1,11 @@
+{
+  "name": "mimo-loopback",
+  "version": "0.1.0",
+  "description": "Captura de áudio por processo no Windows (WASAPI process loopback)",
+  "main": "index.js",
+  "private": true,
+  "gypfile": true,
+  "dependencies": {
+    "node-addon-api": "^8.5.0"
+  }
+}

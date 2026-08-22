@@ -6,7 +6,8 @@ name: MIMO desktop (Windows)
 
 on:
   push:
-    tags: ['v*']
+    branches: [main]      # só compila, não publica: é o retorno do addon nativo
+    tags: ['v*']          # tag = compila e publica no Releases
   workflow_dispatch:
 
 permissions:
@@ -38,6 +39,12 @@ jobs:
           }
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Conferir se o addon nativo compilou
+        shell: bash
+        run: |
+          f=$(find node_modules/mimo-loopback -name '*.node' 2>/dev/null | head -1)
+          if [ -z "$f" ]; then echo "::error::o addon mimo_loopback.node não foi gerado"; exit 1; fi
+          echo "addon: $f ($(stat -c%s "$f") bytes)"
       - uses: actions/upload-artifact@v4
         with:
           name: MIMO-setup

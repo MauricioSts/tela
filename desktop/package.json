@@ -16,5 +16,9 @@
   "devDependencies": {
     "electron": "^43.4.1",
     "electron-builder": "^26.15.3"
+  },
+  "dependencies": {
+    "mimo-loopback": "file:native",
+    "node-addon-api": "^8.9.2"
   }
 }

@@ -9,6 +9,10 @@ files:
   - preload-picker.js
   - picker.html
   - package.json
+  - lib/**/*
+  # o addon de áudio por processo mora aqui; o electron-builder tira os .node do
+  # asar sozinho e o @electron/rebuild recompila pra ABI do Electron
+  - node_modules/**/*
 win:
   target:
     - target: nsis
