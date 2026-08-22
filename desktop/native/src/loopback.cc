@@ -13,12 +13,14 @@
 #include <napi.h>
 
 #include <windows.h>
+#include <winternl.h>
 #include <mmdeviceapi.h>
 #include <audioclient.h>
 #include <audioclientactivationparams.h>
 #include <wrl/implements.h>
 
 #include <atomic>
+#include <cstdio>
 #include <memory>
 #include <string>
 #include <thread>
@@ -52,7 +54,7 @@ class Handler : public RuntimeClass<RuntimeClassFlags<ClassicCom>, FtmBase,
   STDMETHODIMP ActivateCompleted(IActivateAudioInterfaceAsyncOperation* op) override {
     HRESULT hrAtivacao = S_OK;
     ComPtr<IUnknown> punk;
-    hr_ = op->GetActivateResult(&hrAtivacao, &punk);
+    hr_ = op->GetActivateResult(&hrAtivacao, punk.GetAddressOf());
     if (SUCCEEDED(hr_)) hr_ = hrAtivacao;
     if (SUCCEEDED(hr_) && punk) hr_ = punk.As(&cliente_);
     SetEvent(pronto_);
@@ -101,7 +103,8 @@ void Capturar(Sessao* s) {
   ComPtr<Handler> handler = Make<Handler>();
   ComPtr<IActivateAudioInterfaceAsyncOperation> op;
   hr = ActivateAudioInterfaceAsync(VIRTUAL_AUDIO_DEVICE_PROCESS_LOOPBACK,
-                                   __uuidof(IAudioClient), &pv, handler.Get(), &op);
+                                   __uuidof(IAudioClient), &pv, handler.Get(),
+                                   op.GetAddressOf());
   if (FAILED(hr)) {
     AvisaErro(s, HrTexto("ActivateAudioInterfaceAsync", hr));
     if (comInit) CoUninitialize();
@@ -136,7 +139,7 @@ void Capturar(Sessao* s) {
   HANDLE evento = CreateEventW(nullptr, FALSE, FALSE, nullptr);
   hr = cliente->SetEventHandle(evento);
   ComPtr<IAudioCaptureClient> captura;
-  if (SUCCEEDED(hr)) hr = cliente->GetService(IID_PPV_ARGS(&captura));
+  if (SUCCEEDED(hr)) hr = cliente->GetService(IID_PPV_ARGS(captura.GetAddressOf()));
   if (SUCCEEDED(hr)) hr = cliente->Start();
   if (FAILED(hr)) {
     AvisaErro(s, HrTexto("início da captura", hr));
@@ -219,14 +222,20 @@ Napi::Value Start(const Napi::CallbackInfo& info) {
   return handle;
 }
 
-// O modo EXCLUDE só existe a partir do build 20348; abaixo disso nem adianta
+// O modo EXCLUDE só existe a partir do build 20348; abaixo disso nem adianta.
+// VerifyVersionInfo mente conforme o manifesto do executável (devolve versões
+// antigas pra quem não declarou compatibilidade); RtlGetVersion diz a verdade.
 Napi::Value Suportado(const Napi::CallbackInfo& info) {
-  OSVERSIONINFOEXW v{};
-  v.dwOSVersionInfoSize = sizeof(v);
-  v.dwBuildNumber = 20348;
-  DWORDLONG cond = 0;
-  VER_SET_CONDITION(cond, VER_BUILDNUMBER, VER_GREATER_EQUAL);
-  const bool ok = VerifyVersionInfoW(&v, VER_BUILDNUMBER, cond) != FALSE;
+  using RtlGetVersionFn = LONG(WINAPI*)(PRTL_OSVERSIONINFOW);
+  bool ok = false;
+  if (HMODULE nt = GetModuleHandleW(L"ntdll.dll")) {
+    auto fn = reinterpret_cast<RtlGetVersionFn>(GetProcAddress(nt, "RtlGetVersion"));
+    RTL_OSVERSIONINFOW v{};
+    v.dwOSVersionInfoSize = sizeof(v);
+    if (fn && fn(&v) == 0) {
+      ok = v.dwMajorVersion > 10 || (v.dwMajorVersion == 10 && v.dwBuildNumber >= 20348);
+    }
+  }
   return Napi::Boolean::New(info.Env(), ok);
 }
 
