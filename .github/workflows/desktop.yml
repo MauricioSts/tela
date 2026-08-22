@@ -1,0 +1,36 @@
+# Compila o app de desktop no Windows e publica o instalador no Releases.
+# Roda sozinho quando você empurra uma tag desktop-v* (ex.: desktop-v0.1.0);
+# no botão "Run workflow" ele só compila e deixa o .exe como artifact.
+name: MIMO desktop (Windows)
+
+on:
+  push:
+    tags: ['desktop-v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write          # necessário pra criar o Release
+
+jobs:
+  build:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: desktop
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+      - run: npm ci
+      - name: Empacotar (e publicar, se for tag)
+        run: npx electron-builder --win --publish ${{ startsWith(github.ref, 'refs/tags/') && 'always' || 'never' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: MIMO-setup
+          path: desktop/dist/*.exe
+          if-no-files-found: error

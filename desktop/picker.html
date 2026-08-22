@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; style-src 'unsafe-inline'; script-src 'unsafe-inline'">
+<title>Compartilhar tela</title>
+<style>
+  :root{
+    --bg:#07080a; --panel:#0e1116; --panel-deep:#0a0c10; --tile:#0d1015;
+    --line:rgba(255,255,255,.07); --line-strong:rgba(255,255,255,.12);
+    --text:#e8ecf2; --text-3:#8d95a5; --text-4:#5f6777;
+    --lime:#ceff36; --cyan:#35e5ff;
+    --disp:"Chakra Petch","Segoe UI",system-ui,sans-serif;
+    --mono:"JetBrains Mono",Consolas,ui-monospace,monospace;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);color:var(--text);font-family:var(--disp);height:100vh;display:flex;flex-direction:column;
+    user-select:none;overflow:hidden}
+  header{padding:18px 22px 12px;border-bottom:1px solid var(--line);background:var(--panel)}
+  .k{font-family:var(--mono);font-size:10px;letter-spacing:.22em;color:var(--lime)}
+  h1{font-size:21px;font-weight:700;letter-spacing:.01em;margin-top:3px}
+  .tabs{display:flex;gap:8px;padding:14px 22px 0}
+  .tab{flex:0 0 auto;padding:10px 16px;border:1px solid var(--line-strong);background:none;color:var(--text-4);
+    font-family:var(--mono);font-size:10px;letter-spacing:.16em;cursor:pointer}
+  .tab.on{color:var(--lime);border-color:var(--lime);background:rgba(206,255,54,.07)}
+  main{flex:1;overflow-y:auto;padding:16px 22px}
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px}
+  .src{border:1px solid var(--line-strong);background:var(--tile);cursor:pointer;overflow:hidden;
+    display:flex;flex-direction:column;transition:border-color .12s,background .12s}
+  .src:hover{border-color:rgba(255,255,255,.35)}
+  .src.on{border-color:var(--lime);background:rgba(206,255,54,.07)}
+  .src .th{aspect-ratio:16/9;background:var(--panel-deep);display:flex;align-items:center;justify-content:center;overflow:hidden}
+  .src .th img{max-width:100%;max-height:100%;object-fit:contain}
+  .src .nm{padding:9px 10px;display:flex;align-items:center;gap:8px;font-size:12.5px;line-height:1.3;
+    border-top:1px solid var(--line);min-height:40px}
+  .src .nm img{width:16px;height:16px;flex:none}
+  .src .nm span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .vazio{color:var(--text-4);font-size:13px;padding:30px 0;text-align:center;grid-column:1/-1}
+  footer{border-top:1px solid var(--line);background:var(--panel);padding:14px 22px;display:flex;align-items:center;gap:14px}
+  .aud{display:flex;align-items:center;gap:10px;cursor:pointer;flex:1;min-width:0}
+  .track{width:40px;height:22px;background:rgba(255,255,255,.18);position:relative;flex:none}
+  .track i{position:absolute;top:2px;left:2px;width:18px;height:18px;background:#07080a;transition:left .18s}
+  .aud.on .track{background:var(--lime)} .aud.on .track i{left:20px}
+  .aud .t{font-size:13.5px}
+  .aud .t small{display:block;font-size:11.5px;color:var(--text-4);font-family:var(--mono);letter-spacing:.04em}
+  button.act{padding:12px 20px;border:1px solid var(--line-strong);background:none;color:var(--text-3);
+    font-family:var(--mono);font-size:11px;letter-spacing:.16em;cursor:pointer}
+  button.go{background:var(--lime);color:#07080a;border-color:var(--lime);font-weight:700;
+    clip-path:polygon(0 0,100% 0,100% 68%,calc(100% - 12px) 100%,0 100%)}
+  button.go:disabled{opacity:.35;cursor:not-allowed}
+</style>
+</head>
+<body>
+  <header>
+    <div class="k">// TRANSMITIR</div>
+    <h1>O que você quer mostrar?</h1>
+  </header>
+  <div class="tabs">
+    <button class="tab on" data-t="screen">TELA INTEIRA</button>
+    <button class="tab" data-t="window">UMA JANELA</button>
+  </div>
+  <main><div class="grid" id="grid"><div class="vazio">Procurando o que dá pra transmitir…</div></div></main>
+  <footer>
+    <div class="aud on" id="aud">
+      <div class="track"><i></i></div>
+      <div class="t">Levar o áudio do PC<small>MIX DO SISTEMA</small></div>
+    </div>
+    <button class="act" id="refresh">ATUALIZAR</button>
+    <button class="act" id="cancel">CANCELAR</button>
+    <button class="act go" id="go" disabled>TRANSMITIR →</button>
+  </footer>
+<script>
+  const $ = (id) => document.getElementById(id);
+  let fontes = [], tipo = 'screen', escolhido = null, comAudio = true, carregando = true;
+
+  function pintar(){
+    const lista = fontes.filter(f => f.tipo === tipo);
+    const g = $('grid');
+    if(carregando){ g.innerHTML = '<div class="vazio">Procurando o que dá pra transmitir…</div>'; $('go').disabled = true; return; }
+    if(!lista.length){
+      g.innerHTML = '<div class="vazio">Nada aqui.<br>Abra o programa que você quer mostrar e clique em ATUALIZAR.</div>';
+      $('go').disabled = true; return; }
+    g.innerHTML = lista.map(f => `
+      <div class="src${f.id===escolhido?' on':''}" data-id="${f.id}">
+        <div class="th">${f.thumb?`<img src="${f.thumb}" alt="">`:''}</div>
+        <div class="nm">${f.icone?`<img src="${f.icone}" alt="">`:''}<span>${f.nome.replace(/[<>&]/g,'')}</span></div>
+      </div>`).join('');
+    g.querySelectorAll('.src').forEach(el => {
+      el.onclick = () => { escolhido = el.dataset.id; pintar(); };
+      el.ondblclick = () => { escolhido = el.dataset.id; transmitir(); };
+    });
+    $('go').disabled = !lista.some(f => f.id === escolhido);
+  }
+  function transmitir(){
+    if(!escolhido) return;
+    window.picker.escolher({ id: escolhido, audio: comAudio });
+  }
+  document.querySelectorAll('.tab').forEach(t => t.onclick = () => {
+    tipo = t.dataset.t; escolhido = null;
+    document.querySelectorAll('.tab').forEach(x => x.classList.toggle('on', x === t));
+    pintar();
+  });
+  $('aud').onclick = () => { comAudio = !comAudio; $('aud').classList.toggle('on', comAudio); };
+  $('go').onclick = transmitir;
+  $('cancel').onclick = () => window.picker.cancelar();
+  document.addEventListener('keydown', e => {
+    if(e.key === 'Escape') window.picker.cancelar();
+    if(e.key === 'Enter') transmitir();
+  });
+
+  /* a listagem depende do compositor do sistema e às vezes volta vazia na
+     primeira tentativa — tenta de novo sozinha antes de dizer que não tem nada */
+  async function listar(tentativas = 3){
+    carregando = true; pintar();
+    for(let i = 0; i < tentativas; i++){
+      try{
+        const f = await window.picker.fontes();
+        if(f.length){ fontes = f; carregando = false; pintar(); return; }
+      }catch(e){ /* tenta de novo */ }
+      await new Promise(r => setTimeout(r, 600));
+    }
+    fontes = []; carregando = false; pintar();
+  }
+  $('refresh').onclick = () => { escolhido = null; listar(); };
+  listar();
+</script>
+</body>
+</html>

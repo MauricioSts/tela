@@ -1,0 +1,20 @@
+{
+  "name": "mimo-desktop",
+  "productName": "MIMO",
+  "version": "0.1.0",
+  "description": "MIMO no desktop — transmissão de tela com áudio isolado por programa",
+  "main": "main.js",
+  "author": "MauricioSts",
+  "license": "MIT",
+  "private": true,
+  "scripts": {
+    "start": "electron .",
+    "start:local": "MIMO_URL=http://localhost:8080 electron .",
+    "smoke": "xvfb-run -a -s \"-screen 0 1440x900x24\" electron test/smoke.js --no-sandbox",
+    "dist": "electron-builder --win --publish never"
+  },
+  "devDependencies": {
+    "electron": "^43.4.1",
+    "electron-builder": "^26.15.3"
+  }
+}

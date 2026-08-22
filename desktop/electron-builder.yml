@@ -1,0 +1,30 @@
+appId: com.mauriciosts.mimo
+productName: MIMO
+directories:
+  buildResources: build
+  output: dist
+files:
+  - main.js
+  - preload-site.js
+  - preload-picker.js
+  - picker.html
+  - package.json
+win:
+  target:
+    - target: nsis
+      arch: [x64]
+  icon: build/icon.ico
+  artifactName: MIMO-${version}-Setup.${ext}
+nsis:
+  # instala em %LOCALAPPDATA% pro usuário atual: sem UAC, sem pedir senha de admin
+  oneClick: true
+  perMachine: false
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: MIMO
+  deleteAppDataOnUninstall: false
+publish:
+  provider: github
+  owner: MauricioSts
+  repo: tela
+  releaseType: release
